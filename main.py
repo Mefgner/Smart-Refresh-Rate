@@ -4,7 +4,7 @@ from pynput import keyboard
 from ResChanger import reschanger
 
 Keys = keyboard.Key
-last_btn: Keys | str
+last_btn: Keys
 
 
 def on_press(key):
@@ -16,6 +16,7 @@ def on_press(key):
 def on_release(key):
     if key == Keys.delete and last_btn == Keys.shift_r:
         reschanger.set_display_defaults()
+        exit()
         
 
 def get_current_state():
