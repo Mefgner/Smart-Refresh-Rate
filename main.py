@@ -49,9 +49,14 @@ def hz60loop(time_step, w, h, perf_rate, eff_rate):
         
 
 def auto60hz(time_step=1, w=1920, h=1080, perf_rate=144, eff_rate=60, startup_switch=True):
-    if startup_switch:
+    try:
+        if startup_switch:
+            switch_rate(get_current_state(), w, h, perf_rate, eff_rate)
+    except:
+        time.sleep(5)
         switch_rate(get_current_state(), w, h, perf_rate, eff_rate)
-    hz60loop(time_step, w, h, perf_rate, eff_rate)
+    finally:
+        hz60loop(time_step, w, h, perf_rate, eff_rate)
     
         
 if __name__ == '__main__':
