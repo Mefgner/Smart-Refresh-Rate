@@ -1,12 +1,28 @@
+import asyncio
+import dataclasses
 import json
-import time
-import psutil
+import datetime
+
 from pynput import keyboard
-from ResChanger import reschanger
-# import argparse
+import psutil
+import reschanger
 
 Keys = keyboard.Key
 last_btn: Keys
+TIME_STEP = 1
+STARTUP_SWITCH = True
+
+
+@dataclasses.dataclass
+class ScreenSettings:
+    width: int
+    height: int
+    refresh_rate: int
+
+
+def write_logs(e: Exception):
+    with open('log.txt', 'a', encoding='utf-8') as log:
+        log.write(f'{datetime.datetime.today()}\n{repr(e)}\n{reschanger.get_resolution()}\n')
 
 
 def on_press(key):
@@ -19,65 +35,71 @@ def on_release(key):
     if key == Keys.delete and last_btn == Keys.shift_r:
         reschanger.set_display_defaults()
         exit()
-        
+
 
 def get_current_state():
     return psutil.sensors_battery().power_plugged
 
 
-def switch_state(w, h, rate):
-    reschanger.set_resolution(w, h, rate)
+async def change_screen_settings(ss: ScreenSettings):
+    try:
+        reschanger.set_resolution(ss.width, ss.height, ss.refresh_rate)
+    except Exception as e:
+        write_logs(e)
+        await asyncio.sleep(5)
+        reschanger.set_resolution(ss.width, ss.height, ss.refresh_rate)
+    finally:
+        exit()
 
 
-def switch_rate(current_state, w, h, perf_rate, eff_rate):
+async def switch_rate(current_state, prss: ScreenSettings, psss: ScreenSettings):
     if current_state:
-        switch_state(w, h, perf_rate)
+        await change_screen_settings(prss)
     else:
-        switch_state(w, h, eff_rate)
+        await change_screen_settings(psss)
 
 
-def hz60loop(time_step, w, h, perf_rate, eff_rate):
+async def hz60loop(time_step, prss: ScreenSettings, psss: ScreenSettings):
     last_state = get_current_state()
     while True:
-        time.sleep(time_step)
+        await asyncio.sleep(time_step)
         current_state = get_current_state()
         if last_state == current_state:
             continue
         else:
-            switch_rate(current_state, w, h, perf_rate, eff_rate)
+            await switch_rate(current_state, prss, psss)
         last_state = current_state
-        
 
-def auto60hz(time_step=1, w=1920, h=1080, perf_rate=144, eff_rate=60, startup_switch=True):
-    try:
-        if startup_switch:
-            switch_rate(get_current_state(), w, h, perf_rate, eff_rate)
-    except:
-        time.sleep(5)
-        switch_rate(get_current_state(), w, h, perf_rate, eff_rate)
-    finally:
-        hz60loop(time_step, w, h, perf_rate, eff_rate)
-    
-        
-if __name__ == '__main__':
-    # arg = argparse.ArgumentParser(
-    #     prog="Auto60HZ",
-    #     description="Auto switches refresh rate if power state switched",
-    # )
-    
-    # arg.add_argument("-wx", "--width", type=int, help="Resolution width")
-    # arg.add_argument("-hx", "--height", type=int, help="Resolution height")
-    # arg.add_argument("-pr", "--performance-rate", type=int, help="Resolution refresh rate(charger plugged-in)")
-    # arg.add_argument("-er", "--efficiency-rate", type=int, help="Resolution refresh rate(charger plugged-out)")
-    
-    # arg.add_argument("--do-startup-switch", action="store_true", help="Program comparing current state of charger with current refresh rate and switches it.")
-    # params = dict(arg.parse_args())
-    
-    with open('config.json') as f:
-        stream = f.read()
+
+async def auto60hz(time_step: int, prss: ScreenSettings, psss: ScreenSettings, startup_switch: bool):
+    if startup_switch:
+        await switch_rate(get_current_state(), prss, psss)
+    await hz60loop(time_step, prss, psss)
+
+
+async def main():
+
+    with open('config.json') as config:
+        stream = config.read()
         params = json.JSONDecoder().decode(stream)
-    
-        with keyboard.Listener(on_press=on_press, on_release=on_release) as l:
-            auto60hz(w=params['width'], h=params['height'], 
-                    perf_rate=params['performance_refresh_rate'], 
-                    eff_rate=params['efficiency_refresh_rate'])
+
+        with keyboard.Listener(on_press=on_press, on_release=on_release) as keyb:
+            powersave_dict = params["powersave-state"]
+            powersave_state = ScreenSettings(
+                width=powersave_dict["width"],
+                height=powersave_dict["height"],
+                refresh_rate=powersave_dict["refresh-rate"]
+            )
+
+            performance_dict = params["performance-state"]
+            performance_state = ScreenSettings(
+                width=performance_dict["width"],
+                height=performance_dict["height"],
+                refresh_rate=performance_dict["refresh-rate"]
+            )
+
+            await auto60hz(TIME_STEP, performance_state, powersave_state, STARTUP_SWITCH)
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
