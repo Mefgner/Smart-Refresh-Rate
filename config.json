@@ -1,6 +1,12 @@
 {
+  "powersave-state": {
     "width": 1920,
     "height": 1080,
-    "efficiency_refresh_rate": 60,
-    "performance_refresh_rate": 144
+    "refresh-rate": 60
+  },
+  "performance-state": {
+    "width": 1920,
+    "height": 1080,
+    "refresh-rate": 144
+  }
 }
