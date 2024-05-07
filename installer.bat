@@ -1,4 +1,5 @@
 @echo off
+python -m venv venv
 .\venv\Scripts\pip3.exe install psutil pynput pyinstaller
 .\venv\Scripts\pyinstaller.exe -n Auto60HZ --noconsole -F --add-data "config.json:." --clean main.py
 mkdir %USERPROFILE%\AppData\Local\Auto60HZ
