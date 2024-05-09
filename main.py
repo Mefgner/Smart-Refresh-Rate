@@ -2,6 +2,8 @@ import asyncio
 import dataclasses
 import json
 import datetime
+import pathlib
+import sys, os
 
 from pynput import keyboard
 import psutil
@@ -77,7 +79,7 @@ async def auto60hz(time_step: int, prss: ScreenSettings, psss: ScreenSettings, s
 
 
 async def main():
-    with open('config.json') as config:
+    with open(pathlib.Path(os.getenv("userprofile"))/"AppData"/"Local"/"Auto60HZ"/"config.json") as config:
         stream = config.read()
         params = json.JSONDecoder().decode(stream)
 
