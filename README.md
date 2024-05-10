@@ -1,5 +1,5 @@
 # Auto60HZ
-## This small utility will automatically switch refresh rate you have chosen when you plug off your charger and sets it back when you plug it in
+## This small utility will automatically switch refresh rate of your screen you have chosen when you plug off your charger and sets it back when you plug it in
 
 ## Quick start
 Before of all, **set your own settings** inside config.json (Do it before installing, because the file will be inserted inside .exe).
