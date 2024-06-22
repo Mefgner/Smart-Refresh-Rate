@@ -2,6 +2,8 @@ import asyncio
 import dataclasses
 import json
 import datetime
+import pathlib
+import os
 
 from pynput import keyboard
 import psutil
@@ -12,6 +14,8 @@ last_btn: Keys
 TIME_STEP = 1
 STARTUP_SWITCH = True
 
+PATH_TO_PROGRAM = pathlib.Path(os.getenv("LOCALAPPDATA")) / "Auto60HZ"
+
 
 @dataclasses.dataclass
 class ScreenSettings:
@@ -21,7 +25,7 @@ class ScreenSettings:
 
 
 def write_logs(e: Exception):
-    with open('log.txt', 'a', encoding='utf-8') as log:
+    with open(pathlib.Path(os.getenv("LOCALAPPDATA")) / "Auto60HZ" / "log.txt", 'a', encoding='utf-8') as log:
         log.write(f'{datetime.datetime.today()}\n{repr(e)}\n{reschanger.get_resolution()}\n')
 
 
@@ -80,7 +84,7 @@ async def auto60hz(time_step: int, prss: ScreenSettings, psss: ScreenSettings, s
 
 
 async def main():
-    with open('config.json') as config:
+    with open(PATH_TO_PROGRAM / "config.json") as config:
         stream = config.read()
         params = json.JSONDecoder().decode(stream)
 

@@ -1,5 +1,3 @@
-# Thanks to rzc0d3r https://github.com/rzc0d3r for improving get_resolution()
-
 import ctypes
 import ctypes.wintypes
 
