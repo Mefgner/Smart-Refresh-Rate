@@ -31,14 +31,14 @@ def write_logs(e: Exception):
 
 def on_press(key):
     global last_btn
-    if key != Keys.delete:
+    if key != Keys.backspace:
         last_btn = key
 
 
 def on_release(key):
-    if key == Keys.delete and last_btn == Keys.shift_r:
+    if key == Keys.backspace and last_btn == Keys.shift_r:
         reschanger.set_display_defaults()
-        write_logs(Exception("Emergence exit from the program"))
+        write_logs(Exception("Program termination caused by user"))
         exit()
 
 
