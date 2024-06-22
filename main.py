@@ -34,11 +34,11 @@ def on_press(key):
 def on_release(key):
     if key == Keys.delete and last_btn == Keys.shift_r:
         reschanger.set_display_defaults()
-        write_logs(Exception("Emergency exit from the program"))
+        write_logs(Exception("Emergence exit from the program"))
         exit()
 
 
-def get_current_state():
+def get_current_power_state():
     return psutil.sensors_battery().power_plugged
 
 
@@ -59,20 +59,23 @@ async def switch_rate(current_state, prss: ScreenSettings, psss: ScreenSettings)
 
 
 async def hz60loop(time_step, prss: ScreenSettings, psss: ScreenSettings):
-    last_state = get_current_state()
+    last_state = get_current_power_state()
     while True:
-        await asyncio.sleep(time_step)
-        current_state = get_current_state()
-        if last_state == current_state:
-            continue
-        else:
-            await switch_rate(current_state, prss, psss)
-        last_state = current_state
+        try:
+            await asyncio.sleep(time_step)
+            current_state = get_current_power_state()
+            if last_state == current_state:
+                continue
+            else:
+                await switch_rate(current_state, prss, psss)
+            last_state = current_state
+        except Exception as e:
+            write_logs(e)
 
 
 async def auto60hz(time_step: int, prss: ScreenSettings, psss: ScreenSettings, startup_switch: bool):
     if startup_switch:
-        await switch_rate(get_current_state(), prss, psss)
+        await switch_rate(get_current_power_state(), prss, psss)
     await hz60loop(time_step, prss, psss)
 
 
@@ -95,8 +98,15 @@ async def main():
             refresh_rate=performance_dict["refresh-rate"]
         )
 
-        with keyboard.Listener(on_press=on_press, on_release=on_release):
-            await auto60hz(TIME_STEP, performance_state, powersave_state, STARTUP_SWITCH)
+        fatalities = 0
+
+        while fatalities <= 5:
+            try:
+                with keyboard.Listener(on_press=on_press, on_release=on_release):
+                    await auto60hz(TIME_STEP, performance_state, powersave_state, STARTUP_SWITCH)
+            except Exception as e:
+                write_logs(e)
+                fatalities += 1
 
 
 if __name__ == '__main__':
