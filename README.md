@@ -6,3 +6,4 @@ Before of all, **set your own settings** inside config.json (Do it before instal
 > If you have troubles with downrating refresh rate press _right_shift + backspace_ to set to default your screen settings and close program.
 
 You can use installer.bat to install the program(also will add program to auto startup).
+> You need to have installed python on your pc localy to build the program
