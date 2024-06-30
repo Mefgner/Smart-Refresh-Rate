@@ -1,27 +1,20 @@
 import asyncio
 import dataclasses
-import datetime
 import json
-import os
-import sys
+import datetime
 import pathlib
-import winreg
-import psutil
-import shutil
+import os
 
 from pynput import keyboard
-
+import psutil
 import reschanger
 
 Keys = keyboard.Key
 last_btn: Keys
-TIME_STEP = 1  # seconds
+TIME_STEP = 1
 STARTUP_SWITCH = True
 
-PATH_APPDATA_LOCAL = pathlib.Path(os.getenv("LOCALAPPDATA"))
-PATH_TO_PROGRAM = PATH_APPDATA_LOCAL / "Auto60HZ"
-PATH_CURRENT_FILE = pathlib.Path(sys.argv[0]).resolve()
-PATH_BASE_DIR = PATH_CURRENT_FILE.parent
+PATH_TO_PROGRAM = pathlib.Path(os.getenv("LOCALAPPDATA")) / "Auto60HZ"
 
 
 @dataclasses.dataclass
@@ -31,7 +24,7 @@ class ScreenSettings:
     refresh_rate: int
 
 
-def write_logs(e: Exception | BaseException):
+def write_logs(e: Exception):
     with open(pathlib.Path(os.getenv("LOCALAPPDATA")) / "Auto60HZ" / "log.txt", 'a', encoding='utf-8') as log:
         log.write(f'{datetime.datetime.today()}\n{repr(e)}\n{reschanger.get_resolution()}\n')
 
@@ -60,8 +53,6 @@ async def change_screen_settings(ss: ScreenSettings):
         write_logs(e)
         await asyncio.sleep(5)
         reschanger.set_resolution(ss.width, ss.height, ss.refresh_rate)
-    except BaseException as e:
-        write_logs(e)
 
 
 async def switch_rate(current_state, prss: ScreenSettings, psss: ScreenSettings):
@@ -84,8 +75,6 @@ async def hz60loop(time_step, prss: ScreenSettings, psss: ScreenSettings):
             last_state = current_state
         except Exception as e:
             write_logs(e)
-        except BaseException as e:
-            write_logs(e)
 
 
 async def auto60hz(time_step: int, prss: ScreenSettings, psss: ScreenSettings, startup_switch: bool):
@@ -95,19 +84,7 @@ async def auto60hz(time_step: int, prss: ScreenSettings, psss: ScreenSettings, s
 
 
 async def main():
-    if not pathlib.Path.exists(PATH_TO_PROGRAM):
-        if PATH_CURRENT_FILE.suffix == ".exe":
-            PATH_TO_PROGRAM.mkdir(parents=True, exist_ok=True)
-            shutil.copy(PATH_CURRENT_FILE, PATH_TO_PROGRAM / "Auto60HZ.exe")
-            shutil.copy("config.json", PATH_TO_PROGRAM / "config.json")
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
-                                 0, winreg.KEY_SET_VALUE)
-            winreg.SetValueEx(key, "Auto60HZ", 0, winreg.REG_SZ, str(PATH_TO_PROGRAM / "Auto60HZ.exe"))
-            winreg.CloseKey(key)
-
-    config_path = "config.json" if not (PATH_TO_PROGRAM / "config.json").exists() else PATH_TO_PROGRAM / "config.json"
-
-    with open(config_path.resolve(), "r") as config:
+    with open(PATH_TO_PROGRAM / "config.json") as config:
         stream = config.read()
         params = json.JSONDecoder().decode(stream)
 
