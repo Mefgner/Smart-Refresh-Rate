@@ -134,6 +134,8 @@ def get_resolution():
     i_mode_num = 0
     highest_resolution = [0, 0]
     highest_refresh_rate = 0
+    lowest_refresh_rate = 14440
+
     mult = lambda x, y: x * y
     while user32.EnumDisplaySettingsA(None, i_mode_num, ctypes.pointer(dm)) != 0:
         current_resolution = dm.dmPelsWidth, dm.dmPelsHeight
@@ -142,9 +144,11 @@ def get_resolution():
             highest_resolution = current_resolution
         if highest_refresh_rate < current_frequency:
             highest_refresh_rate = current_frequency
+        if lowest_refresh_rate > current_frequency:
+            lowest_refresh_rate = current_frequency
         i_mode_num += 1
 
-    return *highest_resolution, highest_refresh_rate
+    return *highest_resolution, highest_refresh_rate, lowest_refresh_rate
 
 
 def set_display_defaults():
