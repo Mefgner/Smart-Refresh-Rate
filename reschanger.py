@@ -132,7 +132,7 @@ def get_resolution():
     dm = DEVMODE()
     dm.dmSize = ctypes.sizeof(dm)
     i_mode_num = 0
-    highest_resolution = [0, 0]
+    highest_resolution: tuple[int, int] = (0, 0)
     highest_refresh_rate = 0
     lowest_refresh_rate = 14440
 

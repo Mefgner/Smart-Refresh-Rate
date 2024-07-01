@@ -1,20 +1,27 @@
 import asyncio
 import dataclasses
-import json
 import datetime
-import pathlib
+import json
 import os
-
-from pynput import keyboard
+import sys
+import winreg
 import psutil
+import shutil
+
+from pathlib import Path
+from pynput import keyboard
+
 import reschanger
 
 Keys = keyboard.Key
 last_btn: Keys
-TIME_STEP = 1
+TIME_STEP = 1  # seconds
 STARTUP_SWITCH = True
 
-PATH_TO_PROGRAM = pathlib.Path(os.getenv("LOCALAPPDATA")) / "Auto60HZ"
+PATH_APPDATA_LOCAL = Path(os.getenv("LOCALAPPDATA")).resolve()
+PATH_TO_PROGRAM = PATH_APPDATA_LOCAL / "Auto60HZ"
+PATH_CURRENT_FILE = Path(sys.argv[0]).resolve()
+PATH_BASE_DIR = PATH_CURRENT_FILE.parent
 
 
 @dataclasses.dataclass
@@ -24,9 +31,15 @@ class ScreenSettings:
     refresh_rate: int
 
 
-def write_logs(e: Exception):
-    with open(pathlib.Path(os.getenv("LOCALAPPDATA")) / "Auto60HZ" / "log.txt", 'a', encoding='utf-8') as log:
-        log.write(f'{datetime.datetime.today()}\n{repr(e)}\n{reschanger.get_resolution()}\n')
+def write_logs(e: Exception | BaseException):
+    def write(exception: Exception | BaseException, method: str = 'a'):
+        with open((PATH_TO_PROGRAM / "log.txt"), method, encoding='utf-8') as log:
+            log.write(f'{datetime.datetime.today()}\n{repr(exception)}\n{reschanger.get_resolution()}\n')
+
+    try:
+        write(e, 'a')
+    except FileNotFoundError:
+        write(e, 'w')
 
 
 def on_press(key):
@@ -42,8 +55,25 @@ def on_release(key):
         exit()
 
 
-def get_current_power_state():
+def cur_power_state():
     return psutil.sensors_battery().power_plugged
+
+
+def cur_monitor_specs() -> dict[str, dict[str, int]]:
+    width, height, refresh_rate_max, refresh_rate_min = reschanger.get_resolution()
+    params = {
+        "powersave-state": {
+            "width": width,
+            "height": height,
+            "refresh_rate": refresh_rate_min
+        },
+        "performance-state": {
+            "width": width,
+            "height": height,
+            "refresh_rate": refresh_rate_max
+        }
+    }
+    return params
 
 
 async def change_screen_settings(ss: ScreenSettings):
@@ -53,6 +83,9 @@ async def change_screen_settings(ss: ScreenSettings):
         write_logs(e)
         await asyncio.sleep(5)
         reschanger.set_resolution(ss.width, ss.height, ss.refresh_rate)
+    except KeyboardInterrupt as k:
+        write_logs(k)
+        exit()
 
 
 async def switch_rate(current_state, prss: ScreenSettings, psss: ScreenSettings):
@@ -63,44 +96,53 @@ async def switch_rate(current_state, prss: ScreenSettings, psss: ScreenSettings)
 
 
 async def hz60loop(time_step, prss: ScreenSettings, psss: ScreenSettings):
-    last_state = get_current_power_state()
+    last_state = cur_power_state()
     while True:
         try:
             await asyncio.sleep(time_step)
-            current_state = get_current_power_state()
+            current_state = cur_power_state()
             if last_state == current_state:
                 continue
             else:
                 await switch_rate(current_state, prss, psss)
             last_state = current_state
+        except KeyboardInterrupt as k:
+            write_logs(k)
+            exit()
         except Exception as e:
             write_logs(e)
 
 
 async def auto60hz(time_step: int, prss: ScreenSettings, psss: ScreenSettings, startup_switch: bool):
     if startup_switch:
-        await switch_rate(get_current_power_state(), prss, psss)
+        await switch_rate(cur_power_state(), prss, psss)
     await hz60loop(time_step, prss, psss)
 
 
 async def main():
-    with open(PATH_TO_PROGRAM / "config.json") as config:
+    print(sys.argv)
+    if not Path.exists(PATH_TO_PROGRAM) and PATH_CURRENT_FILE.suffix == ".exe":
+        PATH_TO_PROGRAM.mkdir(parents=True, exist_ok=True)
+        shutil.copy(PATH_CURRENT_FILE, PATH_TO_PROGRAM / "Auto60HZ.exe")
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
+                             0, winreg.KEY_SET_VALUE)
+        winreg.SetValueEx(key, "Auto60HZ", 0, winreg.REG_SZ, str(PATH_TO_PROGRAM / "Auto60HZ.exe"))
+        winreg.CloseKey(key)
+
+    if not Path.exists(PATH_TO_PROGRAM / "config.json"):
+        with open(PATH_TO_PROGRAM / "config.json", "w") as config:
+            params = cur_monitor_specs()
+            json.dump(params, config, indent=4)
+
+    with open(PATH_TO_PROGRAM / "config.json", "r") as config:
         stream = config.read()
         params = json.JSONDecoder().decode(stream)
 
         powersave_dict = params["powersave-state"]
-        powersave_state = ScreenSettings(
-            width=powersave_dict["width"],
-            height=powersave_dict["height"],
-            refresh_rate=powersave_dict["refresh-rate"]
-        )
+        powersave_state = ScreenSettings(**powersave_dict)
 
         performance_dict = params["performance-state"]
-        performance_state = ScreenSettings(
-            width=performance_dict["width"],
-            height=performance_dict["height"],
-            refresh_rate=performance_dict["refresh-rate"]
-        )
+        performance_state = ScreenSettings(**performance_dict)
 
         fatalities = 0
 
@@ -108,6 +150,9 @@ async def main():
             try:
                 with keyboard.Listener(on_press=on_press, on_release=on_release):
                     await auto60hz(TIME_STEP, performance_state, powersave_state, STARTUP_SWITCH)
+            except KeyboardInterrupt as k:
+                write_logs(k)
+                exit()
             except Exception as e:
                 write_logs(e)
                 fatalities += 1
