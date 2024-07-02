@@ -7,6 +7,7 @@ import sys
 import winreg
 import psutil
 import shutil
+from typing import Union, Dict, SupportsInt, AnyStr
 
 from pathlib import Path
 from pynput import keyboard
@@ -31,8 +32,8 @@ class ScreenSettings:
     refresh_rate: int
 
 
-def write_logs(e: Exception | BaseException):
-    def write(exception: Exception | BaseException, method: str = 'a'):
+def write_logs(e: Union[Exception, BaseException]):
+    def write(exception: Union[Exception, BaseException], method: str = 'a'):
         with open((PATH_TO_PROGRAM / "log.txt"), method, encoding='utf-8') as log:
             log.write(f'{datetime.datetime.today()}\n{repr(exception)}\n{reschanger.get_resolution()}\n')
 
@@ -59,7 +60,7 @@ def cur_power_state():
     return psutil.sensors_battery().power_plugged
 
 
-def cur_monitor_specs() -> dict[str, dict[str, int]]:
+def cur_monitor_specs() -> Dict[AnyStr, Dict[AnyStr, SupportsInt]]:
     width, height, refresh_rate_max, refresh_rate_min = reschanger.get_resolution()
     params = {
         "powersave-state": {
