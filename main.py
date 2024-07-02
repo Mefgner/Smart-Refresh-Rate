@@ -7,11 +7,11 @@ import sys
 import winreg
 import psutil
 import shutil
-from typing import Union, Dict, SupportsInt, AnyStr, Tuple
 import ctypes
 
 from pathlib import Path
 from pynput import keyboard
+from typing import Union, Dict, SupportsInt, AnyStr, Tuple
 
 import reschanger
 
@@ -106,9 +106,17 @@ async def srr_loop(time_step, prss: ScreenSettings, psss: ScreenSettings):
         last_state = current_state
 
 
+def is_app_running(app_name):
+    processes = psutil.process_iter()
+    for process in processes:
+        if process.name() == app_name:
+            return True
+
+
 def load_config() -> Tuple[ScreenSettings, ScreenSettings]:
     with open(PATH_TO_PROGRAM / "config.json", "r") as config:
         stream = config.read()
+
         params = json.JSONDecoder().decode(stream)
 
         powersave_dict = params["powersave-state"]
@@ -121,7 +129,7 @@ def load_config() -> Tuple[ScreenSettings, ScreenSettings]:
 
 
 async def main():
-    print(sys.argv)
+    # print(sys.argv)  # debug info
     if not Path.exists(PATH_TO_PROGRAM) and PATH_CURRENT_FILE.suffix == ".exe":
         PATH_TO_PROGRAM.mkdir(parents=True, exist_ok=True)
         shutil.copy(PATH_CURRENT_FILE, PATH_TO_PROGRAM / "SRR.exe")
@@ -138,6 +146,14 @@ async def main():
         with open(PATH_TO_PROGRAM / "config.json", "w") as config:
             params = cur_monitor_specs()
             json.dump(params, config, indent=4)
+
+    if PATH_BASE_DIR != PATH_TO_PROGRAM:
+        if not is_app_running("SRR.exe"):
+            os.startfile(PATH_TO_PROGRAM / "SRR.exe")
+        else:
+            ctypes.windll.user32.MessageBoxW(None, "Another instance of SRR is already running.",
+                                             "Warning", 0)
+        os._exit(-1)
 
     powersave_state, performance_state = load_config()
 
