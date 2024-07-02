@@ -17,11 +17,16 @@ import reschanger
 
 Keys = keyboard.Key
 last_btn: Keys
+
+# constants
 TIME_STEP = 1  # seconds
 STARTUP_SWITCH = True
 
+PROJECT_NAME = "SRR"
+PROJECT_EXECUTABLE = PROJECT_NAME + ".exe"
+
 PATH_APPDATA_LOCAL = Path(os.getenv("LOCALAPPDATA")).resolve()
-PATH_TO_PROGRAM = PATH_APPDATA_LOCAL / "SRR"
+PATH_TO_PROGRAM = PATH_APPDATA_LOCAL / PROJECT_NAME
 PATH_CURRENT_FILE = Path(sys.argv[0]).resolve()
 PATH_BASE_DIR = PATH_CURRENT_FILE.parent
 
@@ -36,7 +41,11 @@ class ScreenSettings:
 def write_logs(e: Union[Exception, BaseException]):
     def write(exception: Union[Exception, BaseException], method: str = 'a'):
         with open((PATH_TO_PROGRAM / "log.txt"), method, encoding='utf-8') as log:
-            log.write(f'{datetime.datetime.today()}\n{repr(exception)}\n{reschanger.get_resolution()}\n')
+            log.write(f'{datetime.datetime.today()}\n{repr(exception)}\n'
+                      f'Your, current screen specs (width, height, refresh rate(min/max)): {reschanger.get_resolution()}\n')
+        ctypes.windll.user32.MessageBoxW(
+            None, f"The SRR program terminated with the following error:\n{str(e)}", "Error", 0
+        )
 
     try:
         write(e, 'a')
@@ -109,7 +118,7 @@ async def srr_loop(time_step, prss: ScreenSettings, psss: ScreenSettings):
 def is_app_running(app_name):
     processes = psutil.process_iter()
     for process in processes:
-        if process.name() == app_name:
+        if process.name() == app_name and process.exe() == PATH_TO_PROGRAM / PROJECT_EXECUTABLE:
             return True
 
 
@@ -132,19 +141,19 @@ async def main():
     # print(sys.argv)  # debug info
     if not Path.exists(PATH_TO_PROGRAM) and PATH_CURRENT_FILE.suffix == ".exe":
         PATH_TO_PROGRAM.mkdir(parents=True, exist_ok=True)
-        shutil.copy(PATH_CURRENT_FILE, PATH_TO_PROGRAM / "SRR.exe")
+        shutil.copy(PATH_CURRENT_FILE, PATH_TO_PROGRAM / PROJECT_EXECUTABLE)
 
         key = winreg.OpenKey(
             winreg.HKEY_LOCAL_MACHINE,
             "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
             0, winreg.KEY_SET_VALUE
         )
-        winreg.SetValueEx(key, "SRR", 0, winreg.REG_SZ, str(PATH_TO_PROGRAM / "SRR.exe"))
+        winreg.SetValueEx(key, PROJECT_NAME, 0, winreg.REG_SZ, str(PATH_TO_PROGRAM / PROJECT_EXECUTABLE))
         winreg.CloseKey(key)
 
     if PATH_BASE_DIR != PATH_TO_PROGRAM:
-        if not is_app_running("SRR.exe"):
-            os.startfile(PATH_TO_PROGRAM / "SRR.exe")
+        if not is_app_running(PROJECT_EXECUTABLE):
+            os.startfile(PATH_TO_PROGRAM / PROJECT_EXECUTABLE)
         else:
             ctypes.windll.user32.MessageBoxW(
                 None, "Another instance of SRR is already running.", "Warning", 0
@@ -163,9 +172,6 @@ async def main():
             await switch_rate(cur_power_state(), performance_state, powersave_state)
             await srr_loop(TIME_STEP, performance_state, powersave_state)
     except Exception as e:
-        ctypes.windll.user32.MessageBoxW(
-            None, f"The SRR program terminated with the following error:\n{repr(e)}", "Error", 0
-        )
         write_logs(e)
 
 
