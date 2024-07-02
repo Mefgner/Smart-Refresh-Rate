@@ -142,11 +142,6 @@ async def main():
         winreg.SetValueEx(key, "SRR", 0, winreg.REG_SZ, str(PATH_TO_PROGRAM / "SRR.exe"))
         winreg.CloseKey(key)
 
-    if not Path.exists(PATH_TO_PROGRAM / "config.json"):
-        with open(PATH_TO_PROGRAM / "config.json", "w") as config:
-            params = cur_monitor_specs()
-            json.dump(params, config, indent=4)
-
     if PATH_BASE_DIR != PATH_TO_PROGRAM:
         if not is_app_running("SRR.exe"):
             os.startfile(PATH_TO_PROGRAM / "SRR.exe")
@@ -154,6 +149,11 @@ async def main():
             ctypes.windll.user32.MessageBoxW(None, "Another instance of SRR is already running.",
                                              "Warning", 0)
         os._exit(-1)
+
+    if not Path.exists(PATH_TO_PROGRAM / "config.json"):
+        with open(PATH_TO_PROGRAM / "config.json", "w") as config:
+            params = cur_monitor_specs()
+            json.dump(params, config, indent=4)
 
     powersave_state, performance_state = load_config()
 
