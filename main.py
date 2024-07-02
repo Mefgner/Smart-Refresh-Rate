@@ -7,7 +7,8 @@ import sys
 import winreg
 import psutil
 import shutil
-from typing import Union, Dict, SupportsInt, AnyStr
+from typing import Union, Dict, SupportsInt, AnyStr, Tuple
+import ctypes
 
 from pathlib import Path
 from pynput import keyboard
@@ -16,7 +17,7 @@ import reschanger
 
 Keys = keyboard.Key
 last_btn: Keys
-TIME_STEP = 2  # seconds
+TIME_STEP = 1  # seconds
 STARTUP_SWITCH = True
 
 PATH_APPDATA_LOCAL = Path(os.getenv("LOCALAPPDATA")).resolve()
@@ -53,7 +54,7 @@ def on_release(key):
     if key == Keys.backspace and last_btn == Keys.shift_r:
         reschanger.set_display_defaults()
         write_logs(Exception("Program termination caused by user"))
-        exit()
+        os._exit(-1)
 
 
 def cur_power_state():
@@ -96,19 +97,27 @@ async def switch_rate(current_state, prss: ScreenSettings, psss: ScreenSettings)
 async def srr_loop(time_step, prss: ScreenSettings, psss: ScreenSettings):
     last_state = cur_power_state()
     while True:
-        try:
-            await asyncio.sleep(time_step)
-            current_state = cur_power_state()
-            if last_state == current_state:
-                continue
-            else:
-                await switch_rate(current_state, prss, psss)
-            last_state = current_state
-        except KeyboardInterrupt as k:
-            write_logs(k)
-            exit()
-        except Exception as e:
-            write_logs(e)
+        await asyncio.sleep(time_step)
+        current_state = cur_power_state()
+        if last_state == current_state:
+            continue
+        else:
+            await switch_rate(current_state, prss, psss)
+        last_state = current_state
+
+
+def load_config() -> Tuple[ScreenSettings, ScreenSettings]:
+    with open(PATH_TO_PROGRAM / "config.json", "r") as config:
+        stream = config.read()
+        params = json.JSONDecoder().decode(stream)
+
+        powersave_dict = params["powersave-state"]
+        powersave_state = ScreenSettings(**powersave_dict)
+
+        performance_dict = params["performance-state"]
+        performance_state = ScreenSettings(**performance_dict)
+
+        return powersave_state, performance_state
 
 
 async def main():
@@ -130,29 +139,16 @@ async def main():
             params = cur_monitor_specs()
             json.dump(params, config, indent=4)
 
-    with open(PATH_TO_PROGRAM / "config.json", "r") as config:
-        stream = config.read()
-        params = json.JSONDecoder().decode(stream)
+    powersave_state, performance_state = load_config()
 
-        powersave_dict = params["powersave-state"]
-        powersave_state = ScreenSettings(**powersave_dict)
-
-        performance_dict = params["performance-state"]
-        performance_state = ScreenSettings(**performance_dict)
-
-        fatalities = 0
-
-        while fatalities <= 5:
-            try:
-                with keyboard.Listener(on_press=on_press, on_release=on_release):
-                    await switch_rate(cur_power_state(), performance_state, powersave_state)
-                    await srr_loop(TIME_STEP, performance_state, powersave_state)
-            except KeyboardInterrupt as k:
-                write_logs(k)
-                exit()
-            except Exception as e:
-                write_logs(e)
-                fatalities += 1
+    try:
+        with keyboard.Listener(on_press=on_press, on_release=on_release):
+            await switch_rate(cur_power_state(), performance_state, powersave_state)
+            await srr_loop(TIME_STEP, performance_state, powersave_state)
+    except Exception as e:
+        ctypes.windll.user32.MessageBoxW(None, f"The SRR program terminated with the following error:\n{repr(e)}",
+                                         "Error", 0)
+        write_logs(e)
 
 
 if __name__ == '__main__':
