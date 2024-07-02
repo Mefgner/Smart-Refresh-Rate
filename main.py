@@ -103,15 +103,16 @@ async def switch_rate(current_state, prss: ScreenSettings, psss: ScreenSettings)
         await change_screen_settings(psss)
 
 
-async def srr_loop(time_step, prss: ScreenSettings, psss: ScreenSettings):
+async def srr_loop(time_step: int):
     last_state = cur_power_state()
     while True:
         await asyncio.sleep(time_step)
+        powersave_state, performance_state = load_config()
         current_state = cur_power_state()
         if last_state == current_state:
             continue
         else:
-            await switch_rate(current_state, prss, psss)
+            await switch_rate(current_state, performance_state, powersave_state)
         last_state = current_state
 
 
@@ -165,12 +166,11 @@ async def main():
             params = cur_monitor_specs()
             json.dump(params, config, indent=4)
 
-    powersave_state, performance_state = load_config()
-
     try:
         with keyboard.Listener(on_press=on_press, on_release=on_release):
+            powersave_state, performance_state = load_config()
             await switch_rate(cur_power_state(), performance_state, powersave_state)
-            await srr_loop(TIME_STEP, performance_state, powersave_state)
+            await srr_loop(TIME_STEP)
     except Exception as e:
         write_logs(e)
 
