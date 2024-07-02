@@ -1,4 +1,4 @@
-# SRR
+# Smart Refresh Rate
 ### This small utility will automatically switch refresh rate of your screen you have chosen when you plug off your charger and sets it back when you plug it in
 
 ## Quick start
