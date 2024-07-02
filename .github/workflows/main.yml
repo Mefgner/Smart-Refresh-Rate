@@ -1,0 +1,39 @@
+name: Compile the project
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'File version (Without spaces and brackets) (Eg: 1.1.0.0, 1.1.0.0-pre)'
+        required: true
+      tagname:
+        description: 'TagName release (Without spaces and brackets) (Eg: 1.1.0.0-test)'
+        required: true
+      release_name:
+        description: 'Release name'
+        required: true
+jobs:
+  Windows:
+    runs-on: windows-latest
+    steps:
+      - name: 'Checkout Repo'
+        uses: actions/checkout@v4
+
+      - name: Compile (based on Python x64)
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+          pyinstaller --onefile --clean --noconsole main.py
+          Move-Item -Path .\dist\main.exe -Destination ".\SRR_v${{ github.event.inputs.version }}_win64.exe"
+
+      - name: Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            SRR_v${{ github.event.inputs.version }}_win64.exe
+          name: ${{ github.event.inputs.release_name }}
+          tag_name: v${{ github.event.inputs.tagname }}
+          draft: false
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.PAT }}
