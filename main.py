@@ -15,11 +15,11 @@ import reschanger
 
 Keys = keyboard.Key
 last_btn: Keys
-TIME_STEP = 1  # seconds
+TIME_STEP = 2  # seconds
 STARTUP_SWITCH = True
 
 PATH_APPDATA_LOCAL = Path(os.getenv("LOCALAPPDATA")).resolve()
-PATH_TO_PROGRAM = PATH_APPDATA_LOCAL / "Auto60HZ"
+PATH_TO_PROGRAM = PATH_APPDATA_LOCAL / "SRR"
 PATH_CURRENT_FILE = Path(sys.argv[0]).resolve()
 PATH_BASE_DIR = PATH_CURRENT_FILE.parent
 
@@ -83,9 +83,6 @@ async def change_screen_settings(ss: ScreenSettings):
         write_logs(e)
         await asyncio.sleep(5)
         reschanger.set_resolution(ss.width, ss.height, ss.refresh_rate)
-    except KeyboardInterrupt as k:
-        write_logs(k)
-        exit()
 
 
 async def switch_rate(current_state, prss: ScreenSettings, psss: ScreenSettings):
@@ -95,7 +92,7 @@ async def switch_rate(current_state, prss: ScreenSettings, psss: ScreenSettings)
         await change_screen_settings(psss)
 
 
-async def hz60loop(time_step, prss: ScreenSettings, psss: ScreenSettings):
+async def srr_loop(time_step, prss: ScreenSettings, psss: ScreenSettings):
     last_state = cur_power_state()
     while True:
         try:
@@ -113,20 +110,18 @@ async def hz60loop(time_step, prss: ScreenSettings, psss: ScreenSettings):
             write_logs(e)
 
 
-async def auto60hz(time_step: int, prss: ScreenSettings, psss: ScreenSettings, startup_switch: bool):
-    if startup_switch:
-        await switch_rate(cur_power_state(), prss, psss)
-    await hz60loop(time_step, prss, psss)
-
-
 async def main():
     print(sys.argv)
     if not Path.exists(PATH_TO_PROGRAM) and PATH_CURRENT_FILE.suffix == ".exe":
         PATH_TO_PROGRAM.mkdir(parents=True, exist_ok=True)
-        shutil.copy(PATH_CURRENT_FILE, PATH_TO_PROGRAM / "Auto60HZ.exe")
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
-                             0, winreg.KEY_SET_VALUE)
-        winreg.SetValueEx(key, "Auto60HZ", 0, winreg.REG_SZ, str(PATH_TO_PROGRAM / "Auto60HZ.exe"))
+        shutil.copy(PATH_CURRENT_FILE, PATH_TO_PROGRAM / "SRR.exe")
+
+        key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
+            0, winreg.KEY_SET_VALUE
+        )
+        winreg.SetValueEx(key, "SRR", 0, winreg.REG_SZ, str(PATH_TO_PROGRAM / "SRR.exe"))
         winreg.CloseKey(key)
 
     if not Path.exists(PATH_TO_PROGRAM / "config.json"):
@@ -149,7 +144,8 @@ async def main():
         while fatalities <= 5:
             try:
                 with keyboard.Listener(on_press=on_press, on_release=on_release):
-                    await auto60hz(TIME_STEP, performance_state, powersave_state, STARTUP_SWITCH)
+                    await switch_rate(cur_power_state(), performance_state, powersave_state)
+                    await srr_loop(TIME_STEP, performance_state, powersave_state)
             except KeyboardInterrupt as k:
                 write_logs(k)
                 exit()
