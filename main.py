@@ -40,19 +40,24 @@ class ScreenSettings:
 
 
 def write_logs(e: Union[Exception, BaseException]):
-    def write(exception: Union[Exception, BaseException], method: str = 'a'):
-        with open((PATH_TO_PROGRAM / "log.txt"), method, encoding='utf-8') as log:
-            log.write(f'{datetime.datetime.today()}\n{repr(exception)}\n'
-                      f'Your, current screen specs (width, height, refresh rate(min/max)): {reschanger.get_resolution()}\n'
-                      f'Traceback: \n{'\n'.join(traceback.format_exception(exception))}')
+    def write(exception: Union[Exception, BaseException], method: str = "a"):
+        with open((PATH_TO_PROGRAM / "log.txt"), method, encoding="utf-8") as log:
+            log.write(
+                f'{datetime.datetime.today()}\n{repr(exception)}\n'
+                f'Your, current screen specs (width, height, refresh rate(min/max)): {reschanger.get_resolution()}\n'
+                f'Traceback: \n{'\n'.join(traceback.format_exception(exception))}'
+            )
         ctypes.windll.user32.MessageBoxW(
-            None, f"The SRR program terminated with the following error:\n{str(e)}", "Error", 0
+            None,
+            f"The SRR program terminated with the following error:\n{str(e)}",
+            "Error",
+            0,
         )
 
     try:
-        write(e, 'a')
+        write(e, "a")
     except FileNotFoundError:
-        write(e, 'w')
+        write(e, "w")
 
 
 def on_press(key):
@@ -78,13 +83,13 @@ def cur_monitor_specs() -> Dict[AnyStr, Dict[AnyStr, SupportsInt]]:
         "powersave-state": {
             "width": width,
             "height": height,
-            "refresh_rate": refresh_rate_min
+            "refresh_rate": refresh_rate_min,
         },
         "performance-state": {
             "width": width,
             "height": height,
-            "refresh_rate": refresh_rate_max
-        }
+            "refresh_rate": refresh_rate_max,
+        },
     }
     return params
 
@@ -147,7 +152,10 @@ async def srr_loop(time_step: int):
 def is_app_running(app_name):
     processes = psutil.process_iter()
     for process in processes:
-        if process.name() == app_name and process.exe() == PATH_TO_PROGRAM / PROJECT_EXECUTABLE:
+        if (
+            process.name() == app_name
+            and process.exe() == PATH_TO_PROGRAM / PROJECT_EXECUTABLE
+        ):
             return True
 
 
@@ -159,9 +167,16 @@ async def srr():
         key = winreg.OpenKey(
             winreg.HKEY_LOCAL_MACHINE,
             "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run",
-            0, winreg.KEY_SET_VALUE
+            0,
+            winreg.KEY_SET_VALUE,
         )
-        winreg.SetValueEx(key, PROJECT_NAME, 0, winreg.REG_SZ, str(PATH_TO_PROGRAM / PROJECT_EXECUTABLE))
+        winreg.SetValueEx(
+            key,
+            PROJECT_NAME,
+            0,
+            winreg.REG_SZ,
+            str(PATH_TO_PROGRAM / PROJECT_EXECUTABLE),
+        )
         winreg.CloseKey(key)
 
     if PATH_BASE_DIR != PATH_TO_PROGRAM:
@@ -179,10 +194,9 @@ async def srr():
             json.dump(params, config, indent=4)
 
     with keyboard.Listener(on_press=on_press, on_release=on_release):
-            await switch_rate(cur_power_state(), *load_config())
-            await srr_loop(TIME_STEP)
-            
-        
+        await switch_rate(cur_power_state(), *load_config())
+        await srr_loop(TIME_STEP)
+
 
 async def main():
     try:
@@ -192,5 +206,5 @@ async def main():
         os._exit(-1)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(main())
