@@ -45,7 +45,7 @@ def write_logs(e: Union[Exception, BaseException]):
             log.write(
                 f'{datetime.datetime.today()}\n{repr(exception)}\n'
                 f'Your, current screen specs (width, height, refresh rate(min/max)): {reschanger.get_resolution()}\n'
-                f'Traceback: \n{'\n'.join(traceback.format_exception(exception))}'
+                f'Traceback: \n{"\n".join(traceback.format_exception(exception))}'
             )
         ctypes.windll.user32.MessageBoxW(
             None,
