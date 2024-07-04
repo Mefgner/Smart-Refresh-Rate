@@ -42,11 +42,13 @@ class ScreenSettings:
 def write_logs(e: Union[Exception, BaseException]):
     def write(exception: Union[Exception, BaseException], method: str = "a"):
         with open((PATH_TO_PROGRAM / "log.txt"), method, encoding="utf-8") as log:
-            log.write(
-                f'{datetime.datetime.today()}\n{repr(exception)}\n' +
-                f'Your, current screen specs (width, height, refresh rate(min/max)): {reschanger.get_resolution()}\n' +
-                f'Traceback: \n{"\n".join(traceback.format_exception(exception))}'
-            )
+            pass
+        log.write('\n'.join([
+            datetime.datetime.today(),
+            repr(exception),
+            f'Your, current screen specs (width, height, refresh rate(min/max)): {reschanger.get_resolution()}',
+            f'Traceback: {"\n".join(traceback.format_exception(exception))}'
+        ]))
         ctypes.windll.user32.MessageBoxW(
             None,
             f"The SRR program terminated with the following error:\n{str(e)}",
