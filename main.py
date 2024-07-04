@@ -8,6 +8,7 @@ import winreg
 import psutil
 import shutil
 import ctypes
+import traceback
 
 from pathlib import Path
 from pynput import keyboard
@@ -42,7 +43,8 @@ def write_logs(e: Union[Exception, BaseException]):
     def write(exception: Union[Exception, BaseException], method: str = 'a'):
         with open((PATH_TO_PROGRAM / "log.txt"), method, encoding='utf-8') as log:
             log.write(f'{datetime.datetime.today()}\n{repr(exception)}\n'
-                      f'Your, current screen specs (width, height, refresh rate(min/max)): {reschanger.get_resolution()}\n')
+                      f'Your, current screen specs (width, height, refresh rate(min/max)): {reschanger.get_resolution()}\n'
+                      f'Traceback: \n{'\n'.join(traceback.format_exception(exception))}')
         ctypes.windll.user32.MessageBoxW(
             None, f"The SRR program terminated with the following error:\n{str(e)}", "Error", 0
         )
@@ -87,6 +89,21 @@ def cur_monitor_specs() -> Dict[AnyStr, Dict[AnyStr, SupportsInt]]:
     return params
 
 
+def load_config() -> Tuple[ScreenSettings, ScreenSettings]:
+    with open(PATH_TO_PROGRAM / "config.json", "r") as config:
+        stream = config.read()
+
+        params = json.JSONDecoder().decode(stream)
+
+        performance_dict = params["performance-state"]
+        performance_state = ScreenSettings(**performance_dict)
+
+        powersave_dict = params["powersave-state"]
+        powersave_state = ScreenSettings(**powersave_dict)
+
+        return performance_state, powersave_state
+
+
 async def change_screen_settings(ss: ScreenSettings):
     try:
         reschanger.set_resolution(ss.width, ss.height, ss.refresh_rate)
@@ -105,14 +122,25 @@ async def switch_rate(current_state, prss: ScreenSettings, psss: ScreenSettings)
 
 async def srr_loop(time_step: int):
     last_state = cur_power_state()
+    prev_config_state = load_config()
     while True:
         await asyncio.sleep(time_step)
-        powersave_state, performance_state = load_config()
+
         current_state = cur_power_state()
+        current_config = load_config()
+        if prev_config_state != current_config:
+            ctypes.windll.user32.MessageBoxW(
+                None, "The SRR config was reloaded!", "Info", 0
+            )
+            await switch_rate(current_state, *current_config)
+
+        prev_config_state = current_config
+
         if last_state == current_state:
             continue
         else:
-            await switch_rate(current_state, performance_state, powersave_state)
+            await switch_rate(current_state, *current_config)
+
         last_state = current_state
 
 
@@ -123,23 +151,7 @@ def is_app_running(app_name):
             return True
 
 
-def load_config() -> Tuple[ScreenSettings, ScreenSettings]:
-    with open(PATH_TO_PROGRAM / "config.json", "r") as config:
-        stream = config.read()
-
-        params = json.JSONDecoder().decode(stream)
-
-        powersave_dict = params["powersave-state"]
-        powersave_state = ScreenSettings(**powersave_dict)
-
-        performance_dict = params["performance-state"]
-        performance_state = ScreenSettings(**performance_dict)
-
-        return powersave_state, performance_state
-
-
-async def main():
-    # print(sys.argv)  # debug info
+async def srr():
     if not Path.exists(PATH_TO_PROGRAM) and PATH_CURRENT_FILE.suffix == ".exe":
         PATH_TO_PROGRAM.mkdir(parents=True, exist_ok=True)
         shutil.copy(PATH_CURRENT_FILE, PATH_TO_PROGRAM / PROJECT_EXECUTABLE)
@@ -166,13 +178,18 @@ async def main():
             params = cur_monitor_specs()
             json.dump(params, config, indent=4)
 
-    try:
-        with keyboard.Listener(on_press=on_press, on_release=on_release):
-            powersave_state, performance_state = load_config()
-            await switch_rate(cur_power_state(), performance_state, powersave_state)
+    with keyboard.Listener(on_press=on_press, on_release=on_release):
+            await switch_rate(cur_power_state(), *load_config())
             await srr_loop(TIME_STEP)
+            
+        
+
+async def main():
+    try:
+        await srr()
     except Exception as e:
         write_logs(e)
+        os._exit(-1)
 
 
 if __name__ == '__main__':
