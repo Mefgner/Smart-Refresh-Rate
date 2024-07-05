@@ -40,15 +40,30 @@ class ScreenSettings:
 
 
 def write_logs(e: Union[Exception, BaseException]):
+    """
+        Writes logs to a file when an exception is raised.
+        Args:
+            e (Union[Exception, BaseException]): The exception that was raised.
+        Raises:
+            FileNotFoundError: If the log file does not exist and cannot be created.
+        Returns:
+            None
+        This function writes logs to a file located at PATH_TO_PROGRAM / "log.txt" when an exception is raised.
+        The logs include the current datetime, the exception message, the current screen resolution, and the traceback.
+        If the log file does not exist, it is created. If it cannot be created, a FileNotFoundError is raised.
+        After writing the logs, a message box is displayed with the error message.
+    """
+
     def write(exception: Union[Exception, BaseException], method: str = "a"):
         with open((PATH_TO_PROGRAM / "log.txt"), method, encoding="utf-8") as log:
-            pass
-        log.write('\n'.join([
-            datetime.datetime.today(),
-            repr(exception),
-            f'Your, current screen specs (width, height, refresh rate(min/max)): {reschanger.get_resolution()}',
-            f'Traceback: {"\n".join(traceback.format_exception(exception))}'
-        ]))
+            log.write('\n'.join([
+                str(datetime.datetime.today()),
+                repr(exception),
+                'Your, current screen specs (width, height, refresh rate(min/max)): {}'.format(
+                    reschanger.get_resolution()),
+                'Traceback:',
+                "\n".join(traceback.format_exception(exception))
+            ]))
         ctypes.windll.user32.MessageBoxW(
             None,
             f"The SRR program terminated with the following error:\n{str(e)}",
