@@ -160,7 +160,10 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 .idea/
 .vscode/
+<<<<<<< HEAD
 ide-venv/
 old-venv/
+=======
+>>>>>>> 3eb479f9a83f06c3a27aceacf97b67cd412d1b6c
 
 log.txt
