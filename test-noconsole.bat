@@ -1,5 +1,3 @@
-@echo off
-rmdir /s /q %localappdata%\SRR
 if not exist .venv (
     python -m venv .venv
     .\.venv\Scripts\pip3.exe install -r requirements.txt

@@ -1,18 +1,23 @@
 import ctypes
 import ctypes.wintypes
+import enum
 
 user32 = ctypes.windll.user32
 
 CCHFORMNAME = 32
 CCHDEVICENAME = 32
+
 DM_BITSPERPEL = 0x00040000
 DM_PELSWIDTH = 0x00080000
 DM_PELSHEIGHT = 0x00100000
 DM_DISPLAYFLAGS = 0x00200000
 DM_DISPLAYFREQUENCY = 0x00400000
 DM_POSITION = 0x00000020
+
 DISPLAY_DEVICE_PRIMARY_DEVICE = 0x00000004
+
 ENUM_CURRENT_SETTINGS = -1
+
 CDS_UPDATEREGISTRY = 1
 CDS_TEST = 2
 CDS_FULLSCREEN = 4
@@ -21,14 +26,17 @@ CDS_SET_PRIMARY = 16
 CDS_RESET = 0x40000000
 CDS_SETRECT = 0x20000000
 CDS_NORESET = 0x10000000
-DISP_CHANGE_SUCCESSFUL = 0
-DISP_CHANGE_RESTART = 1
-DISP_CHANGE_FAILED = (-1)
-DISP_CHANGE_BADMODE = (-2)
-DISP_CHANGE_NOTUPDATED = (-3)
-DISP_CHANGE_BADFLAGS = (-4)
-DISP_CHANGE_BADPARAM = (-5)
-DISP_CHANGE_BADDUALVIEW = (-6)
+
+
+class DISP_RESULTS(enum.IntEnum):
+    DISP_CHANGE_SUCCESSFUL = 0
+    DISP_CHANGE_RESTART = 1
+    DISP_CHANGE_FAILED = (-1)
+    DISP_CHANGE_BADMODE = (-2)
+    DISP_CHANGE_NOTUPDATED = (-3)
+    DISP_CHANGE_BADFLAGS = (-4)
+    DISP_CHANGE_BADPARAM = (-5)
+    DISP_CHANGE_BADDUALVIEW = (-6)
 
 
 class DUMMYSTRUCT(ctypes.Structure):
@@ -128,26 +136,48 @@ def get_primary_device():
     return dd
 
 
-def get_resolution():
+def get_resolutions():
+    """Gets all available resolutions"""
     dm = DEVMODE()
     dm.dmSize = ctypes.sizeof(dm)
     i_mode_num = 0
-    highest_resolution: tuple[int, int] = (0, 0)
+
+    while user32.EnumDisplaySettingsA(None, i_mode_num, ctypes.pointer(dm)) != 0:
+        yield dm.dmPelsWidth, dm.dmPelsHeight, dm.dmDisplayFrequency
+        i_mode_num += 1
+
+
+def get_resolution():
+    """
+    Gets screen info tuple special for srr
+
+    :return: A tuple of four integers: width, height, highest_refresh_rate, lowest_refresh_rate
+    """
+    dm = DEVMODE()
+    dm.dmSize = ctypes.sizeof(dm)
+    i_mode_num = 0
+    highest_resolution = (0, 0)
     highest_refresh_rate = 0
     lowest_refresh_rate = 14440
 
     mult = lambda x, y: x * y
     while user32.EnumDisplaySettingsA(None, i_mode_num, ctypes.pointer(dm)) != 0:
+
         current_resolution = dm.dmPelsWidth, dm.dmPelsHeight
         current_frequency = dm.dmDisplayFrequency
+
         if mult(*highest_resolution) < mult(*current_resolution):
             highest_resolution = current_resolution
+
         if highest_refresh_rate < current_frequency:
             highest_refresh_rate = current_frequency
+
         if lowest_refresh_rate > current_frequency:
             lowest_refresh_rate = current_frequency
+
         i_mode_num += 1
 
+    # return alias: width, height, highest_refresh_rate, lowest_refresh_rate
     return *highest_resolution, highest_refresh_rate, lowest_refresh_rate
 
 
@@ -156,7 +186,7 @@ def set_display_defaults():
     user32.ChangeDisplaySettingsA(None, 0)
 
 
-def set_resolution(width, height, freq):
+def set_resolution(width, height, freq) -> int:
     """Set the resolution of the screen
     :param width: width of screen
     :param height: height of screen
@@ -165,15 +195,20 @@ def set_resolution(width, height, freq):
     dd = get_primary_device()
     dm = DEVMODE()
     dm.dmSize = ctypes.sizeof(dm)
+
     if not user32.EnumDisplaySettingsA(dd.DeviceName, ENUM_CURRENT_SETTINGS, ctypes.pointer(dm)):
         raise Exception("Failed to get display settings.")
+
+    if (width, height, freq) not in list(get_resolutions()):
+        return DISP_RESULTS.DISP_CHANGE_BADPARAM
 
     dm.dmPelsWidth = width
     dm.dmPelsHeight = height
     dm.dmDisplayFrequency = freq
     dm.dmFields = (DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY)
 
-    if user32.ChangeDisplaySettingsA(ctypes.byref(dm), CDS_TEST) != DISP_CHANGE_SUCCESSFUL:
-        raise Exception("Graphics mode not supported.")
+    return user32.ChangeDisplaySettingsA(ctypes.byref(dm), 0)
 
-    return user32.ChangeDisplaySettingsA(ctypes.byref(dm), 0) == DISP_CHANGE_SUCCESSFUL
+
+if __name__ == '__main__':
+    print(get_resolutions())
