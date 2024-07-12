@@ -1,14 +1,14 @@
 import dataclasses
-import datetime
+# import datetime
 import json
+import logging
 import os
 import sys
-import winreg
 import psutil
 import shutil
 import ctypes
 import asyncio
-import traceback
+# import traceback
 
 from pathlib import Path
 from pynput import keyboard
@@ -45,37 +45,40 @@ class ScreenSettings:
 
 
 def write_logs(e: Union[Exception, BaseException]):
-    with open((PATH_BASE_DIR / "log.txt"), 'a', encoding="utf-8") as log:
-        max_width = 1
+    logging.info("Writing logs")
 
-        # error log template
-        ls = [
-            '-',
-            str(datetime.datetime.today().isoformat(" ", timespec="seconds")),
-            "Your current screen specs(width, height, refresh rate(max/min)): {}".format(
-                reschanger.get_resolution()
-            ),
-            '-',
-            *traceback.format_exc().split('\n')[:-1],
-            '-',
-            '',
-            '',
-            '',
-        ]
+    # max_width = 1
+    #
+    # # error log template
+    # ls = [
+    #     '-',
+    #     str(datetime.datetime.today().isoformat(" ", timespec="seconds")),
+    #     "Your current screen specs(width, height, refresh rate(max/min)): {}".format(
+    #         reschanger.get_resolution()
+    #     ),
+    #     '-',
+    #     *traceback.format_exc().split('\n')[:-1],
+    #     '-',
+    #     '',
+    #     '',
+    #     '',
+    # ]
+    #
+    # # calculating max width
+    # for x in ls:
+    #     cur_len = len(x)
+    #     if cur_len > max_width:
+    #         max_width = cur_len
+    #
+    # # applying max width to horizontal rule
+    # for index, y in enumerate(ls):
+    #     if y == '-':
+    #         ls[index] = "-" * max_width
 
-        # calculating max width
-        for x in ls:
-            cur_len = len(x)
-            if cur_len > max_width:
-                max_width = cur_len
+    logging.error(f"Error occurred: {str(e)}", exc_info=e)
 
-        # applying max width to horizontal rule
-        for index, y in enumerate(ls):
-            if y == '-':
-                ls[index] = "-" * max_width
-        log.write("\n".join(ls))
     ctypes.windll.user32.MessageBoxW(
-        None, f"The SRR program terminated with the following error:\n{str(e)}", "Error", 0,
+        None, f"The SRR program terminated with the following error:\n{str(e)}", "Error", 0x00000010,
     )
 
 
@@ -88,6 +91,7 @@ def on_press(key):
 def on_release(key):
     if key == Keys.backspace and last_btn == Keys.shift_r:
         reschanger.set_display_defaults()
+        logging.info("Display settings were reset to default and the program was terminated")
         write_logs(Exception("Program termination caused by user"))
         os._exit(-3)
 
@@ -105,6 +109,8 @@ def cur_monitor_specs() -> Dict[AnyStr, Dict[AnyStr, SupportsInt]]:
              'width' and 'height' are screen resolution
              'refresh_rate' is screen refresh rate
     """
+
+    logging.info("Getting current monitor specs")
     width, height, refresh_rate_max, refresh_rate_min = reschanger.get_resolution()
     params = {
         "powersave-state": {
@@ -121,7 +127,8 @@ def cur_monitor_specs() -> Dict[AnyStr, Dict[AnyStr, SupportsInt]]:
     return params
 
 
-def load_config() -> Tuple[ScreenSettings, ScreenSettings]:
+async def load_config() -> Tuple[ScreenSettings, ScreenSettings]:
+    logging.info(f"Loading config from {PATH_TO_PROGRAM / 'config.json'}")
     with open(PATH_TO_PROGRAM / "config.json", "r") as config:
         stream = config.read()
 
@@ -137,6 +144,7 @@ def load_config() -> Tuple[ScreenSettings, ScreenSettings]:
 
 
 async def change_screen_settings(ss: ScreenSettings):
+    logging.info(f"Changing screen settings to {ss}")
     res = reschanger.set_resolution(*ss)
 
     if res == DISP_RESULTS.DISP_CHANGE_BADPARAM:
@@ -180,16 +188,12 @@ async def srr_loop(time_step: int) -> None:
     checks the current power state and the current configuration. If the power
     state or the configuration has changed, it will switch the screen settings
     accordingly.
-
-    Args:
-        time_step (int): The time in seconds between each iteration of the loop.
-
-    Returns:
-        None
     """
     last_state = cur_power_state()
-    prev_config_state = load_config()
-    current_config = load_config()
+
+    current_config = await load_config()
+    prev_config_state = current_config
+
     counter = 0
 
     while True:
@@ -198,98 +202,108 @@ async def srr_loop(time_step: int) -> None:
         current_state = cur_power_state()
 
         # I think opening config file every second is not a good idea,
-        # so then I made it in 5 time longer to wait.
-        if counter == 5:
-            current_config = load_config()
+        # so then I made it in 10 time longer to wait.
+        if counter == 10:
+            logging.info(f"Counter now = {counter}, reloading config")
+            current_config = await load_config()
             if prev_config_state != current_config:
                 ctypes.windll.user32.MessageBoxW(
-                    None, "The SRR config was reloaded!", "Info", 0
+                    None, "The SRR config was reloaded!", "Info", 0x00000040
                 )
                 await switch_rate(current_state, *current_config)
 
             prev_config_state = current_config
             counter = 0
 
-        if last_state == current_state:
-            continue
-        else:
+        if last_state != current_state:
             await switch_rate(current_state, *current_config)
 
         last_state = current_state
         counter += 1
 
 
-def get_processes(app_name: AnyStr) -> List[psutil.Process]:
-    # returns all processes with given name except the process itself
+async def get_processes(app_name: AnyStr) -> List[psutil.Process]:
+    # returns all processes with given name except the current process
     processes = psutil.process_iter()
     srr_instances = list(filter(lambda process: process.name() == app_name, processes))
     filtered_instances = list(
-        filter(lambda process: process.exe() != PATH_BASE_DIR, srr_instances)
+        filter(
+            lambda process: (process.exe() != str(PATH_CURRENT_FILE) and process.pid != os.getpid()),
+            srr_instances
+        )
     )
 
-    print("All instances:")
+    logging.debug("Current process:" + str(PATH_CURRENT_FILE))
+    logging.debug("All instances:")
     for instance in srr_instances.copy():
-        print(f"{instance.name()}: {instance.pid} - {instance.exe()}")
+        logging.debug(f"{instance.name()}: {instance.pid} - {instance.exe()}")
 
-    print("Filtered instances:")
+    logging.debug("Filtered instances:")
     for instance in filtered_instances.copy():
-        print(f"{instance.name()}: {instance.pid} - {instance.exe()}")
+        logging.debug(f"{instance.name()}: {instance.pid} - {instance.exe()}")
     return filtered_instances
 
 
 async def srr():
     # program "installer":
     # adding program to its destination and to startup
+    logging.info("Program started")
 
     if PATH_BASE_DIR != PATH_TO_PROGRAM:
 
-        print(f"{PATH_BASE_DIR} and {PATH_TO_PROGRAM} are not the same")
+        logging.info(f"{PATH_BASE_DIR} and {PATH_TO_PROGRAM} are not the same")
         if PATH_CURRENT_FILE.suffix == ".exe":
-            print(f"{PROJECT_EXECUTABLE} is an exe file")
+            logging.info(f"{PROJECT_EXECUTABLE} is an exe file")
 
             # kill all processes except the current one
-            for instance in get_processes(PROJECT_EXECUTABLE):
+            for instance in await get_processes(PROJECT_EXECUTABLE):
                 instance.kill()
 
-            print(f"All {PROJECT_EXECUTABLE} processes were killed except current one")
-            print(f"Live processes: {get_processes(PROJECT_EXECUTABLE)}")
+            await asyncio.sleep(2)
+
+            logging.info(f"All {PROJECT_EXECUTABLE} processes were killed except current one")
+            logging.info(f"Live processes: {await get_processes(PROJECT_EXECUTABLE)}")
 
             shutil.rmtree(PATH_TO_PROGRAM)
-            print(f"{PATH_TO_PROGRAM} was removed")
+            logging.info(f"{PATH_TO_PROGRAM} was removed")
 
             PATH_TO_PROGRAM.mkdir(parents=True, exist_ok=True)
             shutil.copy(PATH_CURRENT_FILE, PATH_TO_PROGRAM / PROJECT_EXECUTABLE)
-            print(f"{PROJECT_EXECUTABLE} was copied to {PATH_TO_PROGRAM}")
+            logging.info(f"{PROJECT_EXECUTABLE} was copied to {PATH_TO_PROGRAM}")
 
-            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, PATH_REG_AUTORUN, 0, winreg.KEY_SET_VALUE)
-            winreg.SetValueEx(key, PROJECT_NAME, 0, winreg.REG_SZ, str(PATH_TO_PROGRAM / PROJECT_EXECUTABLE))
-            winreg.CloseKey(key)
-            print(f"{PROJECT_EXECUTABLE} was added to autorun")
+            # os.system(f'sc create SRR-service binpath="{PATH_TO_PROGRAM / PROJECT_EXECUTABLE}" start=delayed-auto')
+
+            os.system(f"reg add HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v "
+                      f"{PROJECT_NAME} /t REG_SZ /d {PATH_TO_PROGRAM / PROJECT_EXECUTABLE} /f")
+            logging.info(f"{PROJECT_EXECUTABLE} was added to autorun")
 
         # check if the program is already running
         # if it is, exit the program and show a warning message
         # if it is not, start the program
-        if not get_processes(PROJECT_EXECUTABLE):
-            os.startfile(PATH_TO_PROGRAM / PROJECT_EXECUTABLE)
-            print(f"{PROJECT_EXECUTABLE} is not running, so it was started")
-            os._exit(0)
-        else:
-            ctypes.windll.user32.MessageBoxW(
-                None, "Another instance of SRR is already running.", "Warning", 0
-            )
-            print(f"{PROJECT_EXECUTABLE} is already running")
-            os._exit(-2)
+        # if not await get_processes(PROJECT_EXECUTABLE):
+
+        os.startfile(PATH_TO_PROGRAM / PROJECT_EXECUTABLE)
+        logging.info(f"{PROJECT_EXECUTABLE} is not running, so it was started")
+        os._exit(0)
+
+        # else:
+        #     ctypes.windll.user32.MessageBoxW(
+        #         None, "Another instance of SRR is already running.", "Warning", 0
+        #     )
+        #     logging.info(f"{PROJECT_EXECUTABLE} is already running")
+        #     os._exit(-2)
 
     # create config file if it doesn't exist
     if not Path.exists(PATH_TO_PROGRAM / "config.json"):
+        logging.info("Config file was not found, so it was created")
         with open(PATH_TO_PROGRAM / "config.json", "w") as config:
             params = cur_monitor_specs()
             json.dump(params, config, indent=4)
 
     # start infinite loop
     with keyboard.Listener(on_press=on_press, on_release=on_release, suppress=False):
-        # listener.join()
-        await switch_rate(cur_power_state(), *load_config())
+        logging.info("Starting infinite loop")
+        await switch_rate(cur_power_state(), *(await load_config()))
         await srr_loop(TIME_STEP)
 
 
@@ -303,4 +317,7 @@ async def main():
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    logging.FileHandler(PATH_TO_PROGRAM / "logs.txt")
+    # logging.StreamHandler()  # sys.stderr
     asyncio.run(main())

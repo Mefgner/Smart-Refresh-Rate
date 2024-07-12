@@ -3,4 +3,4 @@ if not exist .venv (
     .\.venv\Scripts\pip3.exe install -r requirements.txt
     .\.venv\Scripts\pip3.exe install pyinstaller
 )
-.\.venv\Scripts\pyinstaller.exe --uac-admin --noconsole -F -n SRR --clean main.py
+.\.venv\Scripts\pyinstaller.exe --uac-admin --noconsole --clean -n SRR -F main.py

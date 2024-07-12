@@ -3,5 +3,7 @@ if not exist .venv (
     .\.venv\Scripts\pip3.exe install -r requirements.txt
     .\.venv\Scripts\pip3.exe install pyinstaller
 )
-.\.venv\Scripts\pyinstaller.exe --noconsole -n SRR-test -F --clean main.py
-.\dist\SRR-test.exe
+.\.venv\Scripts\pyinstaller.exe --uac-admin --noconsole -n SRR-test -F --clean main.py
+cd .\dist\
+.\SRR-test.exe
+cd ..
