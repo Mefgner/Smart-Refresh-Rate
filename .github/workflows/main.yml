@@ -22,7 +22,7 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install pyinstaller
-          pyinstaller --uac-admin --onefile --clean --noconsole main.py
+          pyinstaller --uac-admin --onefile --clean --noconsole --optimize 2 main.py
           Move-Item -Path .\dist\main.exe -Destination ".\SRR_v${{ github.event.inputs.version }}_win64.exe"
 
       - name: Release
