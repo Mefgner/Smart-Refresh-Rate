@@ -317,6 +317,10 @@ async def main():
 
 
 if __name__ == "__main__":
+    try:
+        os.mkdir(str(PATH_TO_PROGRAM))
+    except:
+        pass
     logging.basicConfig(level=logging.INFO)
     logging.FileHandler(PATH_TO_PROGRAM / "logs.txt")
     # logging.StreamHandler()  # sys.stderr
