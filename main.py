@@ -250,9 +250,6 @@ async def srr():
             os.startfile(PATH_TO_PROGRAM / PROJECT_EXECUTABLE)
             logging.info(f"{PROJECT_EXECUTABLE} is not running, so it was started")
             logging.info(f"{PATH_CURRENT_FILE} terminating itself")
-            ctypes.windll.user32.MessageBoxW(
-                None, "The SRR was successfully installed! Now it runs in background.", "Info", 0x00000040
-            )
             os._exit(0)
 
     # create config file if it doesn't exist
@@ -281,5 +278,5 @@ async def main():
 if __name__ == "__main__":
     if not PATH_TO_PROGRAM.exists():
         PATH_TO_PROGRAM.mkdir()
-    logging.basicConfig(level=logging.INFO, filename=PATH_BASE_DIR / "logs.txt", filemode="w", stream=None)
+    logging.basicConfig(level=logging.INFO, filename=PATH_BASE_DIR / "logs.txt", filemode="w")
     asyncio.run(main())
