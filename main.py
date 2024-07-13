@@ -1,5 +1,4 @@
 import dataclasses
-# import datetime
 import json
 import logging
 import os
@@ -8,7 +7,6 @@ import psutil
 import shutil
 import ctypes
 import asyncio
-# import traceback
 
 from pathlib import Path
 from pynput import keyboard
@@ -46,34 +44,6 @@ class ScreenSettings:
 
 def write_logs(e: Union[Exception, BaseException]):
     logging.info("Writing logs")
-
-    # max_width = 1
-    #
-    # # error log template
-    # ls = [
-    #     '-',
-    #     str(datetime.datetime.today().isoformat(" ", timespec="seconds")),
-    #     "Your current screen specs(width, height, refresh rate(max/min)): {}".format(
-    #         reschanger.get_resolution()
-    #     ),
-    #     '-',
-    #     *traceback.format_exc().split('\n')[:-1],
-    #     '-',
-    #     '',
-    #     '',
-    #     '',
-    # ]
-    #
-    # # calculating max width
-    # for x in ls:
-    #     cur_len = len(x)
-    #     if cur_len > max_width:
-    #         max_width = cur_len
-    #
-    # # applying max width to horizontal rule
-    # for index, y in enumerate(ls):
-    #     if y == '-':
-    #         ls[index] = "-" * max_width
 
     logging.error(f"Error occurred: {str(e)}", exc_info=e)
 
@@ -277,21 +247,10 @@ async def srr():
                       f"{PROJECT_NAME} /t REG_SZ /d {PATH_TO_PROGRAM / PROJECT_EXECUTABLE} /f")
             logging.info(f"{PROJECT_EXECUTABLE} was added to autorun")
 
-        # check if the program is already running
-        # if it is, exit the program and show a warning message
-        # if it is not, start the program
-        # if not await get_processes(PROJECT_EXECUTABLE):
-
-        os.startfile(PATH_TO_PROGRAM / PROJECT_EXECUTABLE)
-        logging.info(f"{PROJECT_EXECUTABLE} is not running, so it was started")
-        os._exit(0)
-
-        # else:
-        #     ctypes.windll.user32.MessageBoxW(
-        #         None, "Another instance of SRR is already running.", "Warning", 0
-        #     )
-        #     logging.info(f"{PROJECT_EXECUTABLE} is already running")
-        #     os._exit(-2)
+            os.startfile(PATH_TO_PROGRAM / PROJECT_EXECUTABLE)
+            logging.info(f"{PROJECT_EXECUTABLE} is not running, so it was started")
+            logging.info(f"{PATH_CURRENT_FILE} terminating itself")
+            os._exit(0)
 
     # create config file if it doesn't exist
     if not Path.exists(PATH_TO_PROGRAM / "config.json"):
@@ -317,7 +276,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
-    logging.FileHandler(PATH_TO_PROGRAM / "logs.txt")
-    # logging.StreamHandler()  # sys.stderr
+    if not PATH_TO_PROGRAM.exists():
+        PATH_TO_PROGRAM.mkdir()
+    logging.basicConfig(level=logging.INFO, filename=PATH_BASE_DIR / "logs.txt", filemode="w")
     asyncio.run(main())

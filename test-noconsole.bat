@@ -7,3 +7,4 @@ if not exist .venv (
 cd .\dist\
 .\SRR-test.exe
 cd ..
+pause
