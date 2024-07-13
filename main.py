@@ -98,7 +98,7 @@ def cur_monitor_specs() -> Dict[AnyStr, Dict[AnyStr, SupportsInt]]:
 
 
 async def load_config() -> Tuple[ScreenSettings, ScreenSettings]:
-    logging.info(f"Loading config from {PATH_TO_PROGRAM / 'config.json'}")
+    logging.debug(f"Loading config from {PATH_TO_PROGRAM / 'config.json'}")
     with open(PATH_TO_PROGRAM / "config.json", "r") as config:
         stream = config.read()
 
@@ -174,7 +174,7 @@ async def srr_loop(time_step: int) -> None:
         # I think opening config file every second is not a good idea,
         # so then I made it in 10 time longer to wait.
         if counter == 10:
-            logging.info(f"Counter now = {counter}, reloading config")
+            logging.debug(f"Counter now = {counter}, reloading config")
             current_config = await load_config()
             if prev_config_state != current_config:
                 ctypes.windll.user32.MessageBoxW(
