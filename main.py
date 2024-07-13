@@ -250,6 +250,9 @@ async def srr():
             os.startfile(PATH_TO_PROGRAM / PROJECT_EXECUTABLE)
             logging.info(f"{PROJECT_EXECUTABLE} is not running, so it was started")
             logging.info(f"{PATH_CURRENT_FILE} terminating itself")
+            ctypes.windll.user32.MessageBoxW(
+                None, "The SRR was successfully installed! Now it runs in background.", "Info", 0x00000040
+            )
             os._exit(0)
 
     # create config file if it doesn't exist
