@@ -100,7 +100,7 @@ def cur_monitor_specs() -> Dict[AnyStr, Dict[AnyStr, SupportsInt]]:
     return params
 
 
-async def load_config() -> Optional[Tuple[ScreenSettings, ScreenSettings], None]:
+async def load_config() -> Optional[Tuple[ScreenSettings, ScreenSettings]]:
     logging.debug(f"Loading config from {PATH_TO_PROGRAM / 'config.json'}")
 
     update_time = os.path.getmtime(PATH_TO_PROGRAM / 'config.json')
