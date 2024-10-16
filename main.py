@@ -10,7 +10,7 @@ import asyncio
 
 from pathlib import Path
 from pynput import keyboard
-from typing import Union, Dict, SupportsInt, AnyStr, Tuple, List
+from typing import Union, Dict, SupportsInt, AnyStr, Tuple, List, Optional
 
 from reschanger import DISP_RESULTS
 import reschanger
@@ -30,6 +30,9 @@ PATH_TO_PROGRAM = PATH_APPDATA_LOCAL / PROJECT_NAME
 PATH_CURRENT_FILE = Path(sys.argv[0]).resolve()
 PATH_BASE_DIR = PATH_CURRENT_FILE.parent
 PATH_REG_AUTORUN = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"
+
+config_last_state = None
+config_last_update = None
 
 
 @dataclasses.dataclass
@@ -97,8 +100,18 @@ def cur_monitor_specs() -> Dict[AnyStr, Dict[AnyStr, SupportsInt]]:
     return params
 
 
-async def load_config() -> Tuple[ScreenSettings, ScreenSettings]:
+async def load_config() -> Optional[Tuple[ScreenSettings, ScreenSettings], None]:
     logging.debug(f"Loading config from {PATH_TO_PROGRAM / 'config.json'}")
+
+    update_time = os.path.getmtime(PATH_TO_PROGRAM / 'config.json')
+
+    global config_last_state, config_last_update
+
+    if config_last_update == update_time:
+        return config_last_state
+
+    config_last_update = update_time
+
     with open(PATH_TO_PROGRAM / "config.json", "r") as config:
         stream = config.read()
 
@@ -110,10 +123,12 @@ async def load_config() -> Tuple[ScreenSettings, ScreenSettings]:
         powersave_dict = params["powersave-state"]
         powersave_state = ScreenSettings(**powersave_dict)
 
+        config_last_state = performance_state, powersave_state
+
         return performance_state, powersave_state
 
 
-async def change_screen_settings(ss: ScreenSettings):
+async def change_screen_settings(ss: ScreenSettings) -> None:
     logging.info(f"Changing screen settings to {ss}")
     res = reschanger.set_resolution(*ss)
 
@@ -134,14 +149,14 @@ async def change_screen_settings(ss: ScreenSettings):
     elif not res == DISP_RESULTS.DISP_CHANGE_SUCCESSFUL:
 
         await asyncio.sleep(10)
-        write_logs(Exception("\n".join(
-            [
-                "Failed to change screen settings.",
-                "This could be due to external interference(like graphic drives)",
-                "or the laptop being in a lockscreen or sleep state,",
-                "as Windows may prevent changes in those states."
-            ]
-        )))
+        # write_logs(Exception("\n".join(
+        #     [
+        #         "Failed to change screen settings.",
+        #         "This could be due to external interference(like graphic drives)",
+        #         "or the laptop being in a lockscreen or sleep state,",
+        #         "as Windows may prevent changes in those states."
+        #     ]
+        # )))
         reschanger.set_resolution(*ss)
 
 
@@ -241,7 +256,7 @@ async def srr():
             shutil.copy(PATH_CURRENT_FILE, PATH_TO_PROGRAM / PROJECT_EXECUTABLE)
             logging.info(f"{PROJECT_EXECUTABLE} was copied to {PATH_TO_PROGRAM}")
 
-            # os.system(f'sc create SRR-service binpath="{PATH_TO_PROGRAM / PROJECT_EXECUTABLE}" start=delayed-auto')
+            # ```os.system(f'sc create SRR-service binpath="{PATH_TO_PROGRAM / PROJECT_EXECUTABLE}" start=delayed-auto')```
 
             os.system(f"reg add HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v "
                       f"{PROJECT_NAME} /t REG_SZ /d {PATH_TO_PROGRAM / PROJECT_EXECUTABLE} /f")
