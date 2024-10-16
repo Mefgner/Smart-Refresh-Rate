@@ -256,7 +256,7 @@ async def srr():
             shutil.copy(PATH_CURRENT_FILE, PATH_TO_PROGRAM / PROJECT_EXECUTABLE)
             logging.info(f"{PROJECT_EXECUTABLE} was copied to {PATH_TO_PROGRAM}")
 
-            # ```os.system(f'sc create SRR-service binpath="{PATH_TO_PROGRAM / PROJECT_EXECUTABLE}" start=delayed-auto')```
+            # os.system(f'sc create SRR-service binpath="{PATH_TO_PROGRAM / PROJECT_EXECUTABLE}" start=delayed-auto')
 
             os.system(f"reg add HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run /v "
                       f"{PROJECT_NAME} /t REG_SZ /d {PATH_TO_PROGRAM / PROJECT_EXECUTABLE} /f")
