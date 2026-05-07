@@ -136,15 +136,29 @@ def get_primary_device():
     return dd
 
 
-def get_resolutions():
-    """Gets all available resolutions"""
+_resolutions_cache = None
+
+
+def _enum_resolutions():
     dm = DEVMODE()
     dm.dmSize = ctypes.sizeof(dm)
     i_mode_num = 0
-
     while user32.EnumDisplaySettingsA(None, i_mode_num, ctypes.pointer(dm)) != 0:
         yield dm.dmPelsWidth, dm.dmPelsHeight, dm.dmDisplayFrequency
         i_mode_num += 1
+
+
+def get_resolutions():
+    """Gets all available resolutions (cached)."""
+    global _resolutions_cache
+    if _resolutions_cache is None:
+        _resolutions_cache = tuple(_enum_resolutions())
+    return _resolutions_cache
+
+
+def invalidate_resolutions_cache():
+    global _resolutions_cache
+    _resolutions_cache = None
 
 
 def get_resolution():
@@ -199,7 +213,7 @@ def set_resolution(width, height, freq) -> int:
     if not user32.EnumDisplaySettingsA(dd.DeviceName, ENUM_CURRENT_SETTINGS, ctypes.pointer(dm)):
         raise Exception("Failed to get display settings.")
 
-    if (width, height, freq) not in list(get_resolutions()):
+    if (width, height, freq) not in get_resolutions():
         return DISP_RESULTS.DISP_CHANGE_BADPARAM
 
     dm.dmPelsWidth = width
