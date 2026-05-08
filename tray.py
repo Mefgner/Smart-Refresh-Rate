@@ -58,6 +58,9 @@ class TrayController:
 
         self.paused = False
         self.state_text = "starting…"
+        self._displays: list = []
+        self._selected_display_id: Optional[str] = None
+        self._on_display_select: Optional[Callable] = None
 
         self._icon_image = _load_icon(icon_path)
         self._icon: Optional[_Icon] = None
@@ -100,6 +103,36 @@ class TrayController:
 
     # --- public api ---------------------------------------------------
 
+    def set_displays(
+        self,
+        displays: list,
+        selected_id: Optional[str],
+        on_select: Callable,
+    ):
+        self._displays = [{"id": None, "name": "All displays"}] + displays
+        self._selected_display_id = selected_id
+        self._on_display_select = on_select
+        self._rebuild_menu()
+
+    def _make_display_selector(self, display_id: Optional[str]) -> Callable:
+        def handler(icon, item):
+            self._selected_display_id = display_id
+            if self._on_display_select is not None:
+                self._on_display_select(display_id)
+            try:
+                icon.update_menu()
+            except Exception:
+                pass
+        return handler
+
+    def _rebuild_menu(self):
+        if self._icon is not None:
+            try:
+                self._icon.menu = self._build_menu()
+                self._icon.update_menu()
+            except Exception as e:
+                logging.warning(f"tray menu rebuild failed: {e}")
+
     def set_state_text(self, text: str):
         self.state_text = text
         if self._icon is not None:
@@ -117,11 +150,33 @@ class TrayController:
                 logging.warning(f"tray notify failed: {e}")
 
     def _build_menu(self) -> pystray.Menu:
-        return pystray.Menu(
+        items = [
             pystray.MenuItem(
                 lambda item: f"Status: {self.state_text}", None, enabled=False
             ),
             pystray.Menu.SEPARATOR,
+        ]
+        if self._displays:
+            items += [
+                pystray.MenuItem(
+                    "Target display",
+                    pystray.Menu(
+                        *[
+                            pystray.MenuItem(
+                                d["name"],
+                                self._make_display_selector(d["id"]),
+                                checked=lambda item, did=d["id"]: (
+                                    self._selected_display_id == did
+                                ),
+                                radio=True,
+                            )
+                            for d in self._displays
+                        ]
+                    ),
+                ),
+                pystray.Menu.SEPARATOR,
+            ]
+        items += [
             pystray.MenuItem(
                 lambda item: "Resume" if self.paused else "Pause",
                 self._toggle_pause,
@@ -137,7 +192,8 @@ class TrayController:
             ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Exit", self._exit),
-        )
+        ]
+        return pystray.Menu(*items)
 
     def start(self):
         icon = pystray.Icon(

@@ -8,7 +8,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import Dict, Iterator, Optional, Set, Tuple
+from typing import Dict, Iterator, Optional, Tuple
 
 import psutil
 from winotify import Notification
@@ -21,7 +21,6 @@ from tray import TrayController
 # constants
 TIME_STEP = 5  # seconds
 CONFIG_RELOAD_EVERY = 6  # iterations -> ~30 s
-REVERT_TIMEOUT = 15  # seconds before auto-reverting a display change
 
 PROJECT_NAME = "SRR"
 PROJECT_EXECUTABLE = PROJECT_NAME + ".exe"
@@ -48,6 +47,7 @@ _tray: Optional[TrayController] = None
 
 config_last_state: Optional[Dict[str, Tuple["ScreenSettings", "ScreenSettings"]]] = None
 config_last_update = None
+config_last_target: Optional[str] = None
 
 
 @dataclasses.dataclass
@@ -93,10 +93,13 @@ def build_display_map() -> Dict[str, bytes]:
     }
 
 
+_CONFIG_RESERVED_KEYS = {"target_display"}
+
+
 async def load_config(
     force: bool = False,
 ) -> Optional[Dict[str, Tuple[ScreenSettings, ScreenSettings]]]:
-    global config_last_state, config_last_update
+    global config_last_state, config_last_update, config_last_target
     try:
         update_time = os.path.getmtime(PATH_CONFIG)
     except OSError as e:
@@ -112,6 +115,8 @@ async def load_config(
 
         result: Dict[str, Tuple[ScreenSettings, ScreenSettings]] = {}
         for monitor_id, entry in raw.items():
+            if monitor_id in _CONFIG_RESERVED_KEYS:
+                continue
             perf = ScreenSettings(**entry["performance-state"])
             psav = ScreenSettings(**entry["powersave-state"])
             result[monitor_id] = (perf, psav)
@@ -123,7 +128,23 @@ async def load_config(
 
     config_last_update = update_time
     config_last_state = result
+    config_last_target = raw.get("target_display", None)
     return config_last_state
+
+
+def save_target_display(mid: Optional[str]) -> None:
+    global config_last_target
+    config_last_target = mid
+    try:
+        existing: dict = {}
+        if PATH_CONFIG.exists():
+            with open(PATH_CONFIG, "r") as f:
+                existing = json.load(f)
+        existing["target_display"] = mid
+        with open(PATH_CONFIG, "w") as f:
+            json.dump(existing, f, indent=4)
+    except Exception as e:
+        logging.warning(f"failed to save target_display: {e}")
 
 
 async def change_screen_settings(ss: ScreenSettings, adapter_name: bytes) -> None:
@@ -166,38 +187,36 @@ def _state_label(state: Optional[bool]) -> str:
     return "AC (performance)" if state else "Battery (powersave)"
 
 
-def _snapshot_current_settings(
-    display_map: Dict[str, bytes],
-    config: Dict[str, Tuple[ScreenSettings, ScreenSettings]],
-) -> Dict[str, ScreenSettings]:
-    snapshot: Dict[str, ScreenSettings] = {}
-    for monitor_id in config:
-        adapter = display_map.get(monitor_id)
-        if adapter is None:
-            continue
-        try:
-            w, h, f = reschanger.get_display_settings(
-                adapter, reschanger.ENUM_CURRENT_SETTINGS
-            )
-            snapshot[monitor_id] = ScreenSettings(w, h, f)
-        except Exception as e:
-            logging.warning(f"snapshot failed for {monitor_id!r}: {e}")
-    return snapshot
+_MANUFACTURER_CODES: Dict[str, str] = {
+    "AUO": "AU Optronics", "BOE": "BOE", "CMN": "Chimei Innolux",
+    "INN": "Innolux", "LGD": "LG Display", "SDC": "Samsung Display",
+    "SHP": "Sharp", "HSD": "HannStar", "LEN": "Lenovo", "APP": "Apple",
+    "DEL": "Dell", "HWP": "HP", "ACR": "Acer", "VSC": "ViewSonic",
+    "BNQ": "BenQ", "NEC": "NEC", "SAM": "Samsung", "PHL": "Philips",
+}
 
 
-async def _revert_after_timeout(
-    prev: Dict[str, ScreenSettings],
-    display_map: Dict[str, bytes],
-) -> None:
-    await asyncio.sleep(REVERT_TIMEOUT)
-    logging.warning("revert timer fired — restoring previous display settings")
-    for monitor_id, ss in prev.items():
-        adapter = display_map.get(monitor_id)
-        if adapter is None:
-            continue
-        await change_screen_settings(ss, adapter)
-    if _tray is not None:
-        _tray.notify("Display settings reverted — screen may have gone dark.")
+def _format_model_code(model_code: str) -> str:
+    prefix, suffix = model_code[:3].upper(), model_code[3:]
+    manufacturer = _MANUFACTURER_CODES.get(prefix, prefix)
+    return f"{manufacturer} {suffix}" if suffix else manufacturer
+
+
+def _format_display_name(
+    adapter_name: bytes, monitor_id: str, monitor_string: str
+) -> str:
+    adapter_str = adapter_name.decode("ascii", errors="replace").strip("\x00")
+    idx = adapter_str.upper().rfind("DISPLAY")
+    num = adapter_str[idx + 7:].strip() if idx >= 0 else "?"
+    parts = [p for p in monitor_id.split("\\") if p]
+    model_code = parts[1] if len(parts) >= 2 else ""
+    name = (
+        reschanger.get_monitor_friendly_name(monitor_id)
+        or (_format_model_code(model_code) if model_code else None)
+        or monitor_string.strip()
+        or "Unknown display"
+    )
+    return f"Display {num} — {name}"
 
 
 async def srr_loop() -> None:
@@ -211,12 +230,33 @@ async def srr_loop() -> None:
     if _tray is not None:
         _tray.set_state_text(_state_label(last_state))
     counter = 0
-    pending_revert: Optional[asyncio.Task] = None
-    pending_confirm: Dict[str, ScreenSettings] = {}
-    confirmed_modes: Set[Tuple[str, int, int, int]] = set()
 
-    def _mode_key(monitor_id: str, ss: ScreenSettings) -> Tuple[str, int, int, int]:
-        return (monitor_id, ss.width, ss.height, ss.refresh_rate)
+    loop = asyncio.get_running_loop()
+    managed_display_id: Optional[str] = config_last_target
+
+    def _set_managed_display(mid: Optional[str]) -> None:
+        nonlocal managed_display_id
+        managed_display_id = mid
+        logging.info(f"tray: managed display set to {mid!r}")
+        save_target_display(mid)
+
+    def _refresh_tray_displays() -> None:
+        if _tray is None:
+            return
+        displays = [
+            {
+                "id": d["monitor_id"],
+                "name": _format_display_name(
+                    d["adapter_name"], d["monitor_id"], d["monitor_string"]
+                ),
+            }
+            for d in reschanger.get_active_displays()
+        ]
+        _tray.set_displays(
+            displays,
+            managed_display_id,
+            lambda mid: loop.call_soon_threadsafe(_set_managed_display, mid),
+        )
 
     def _target_modes(state: bool) -> Dict[str, ScreenSettings]:
         if current_config is None:
@@ -225,30 +265,16 @@ async def srr_loop() -> None:
             mid: (perf if state else psav)
             for mid, (perf, psav) in current_config.items()
             if display_map.get(mid) is not None
+            and (managed_display_id is None or mid == managed_display_id)
         }
 
-    def _needs_revert(targets: Dict[str, ScreenSettings]) -> bool:
-        return any(_mode_key(mid, ss) not in confirmed_modes for mid, ss in targets.items())
-
-    def _confirm_pending() -> None:
-        nonlocal pending_revert, pending_confirm
-        if pending_revert is not None and not pending_revert.done():
-            pending_revert.cancel()
-            pending_revert = None
-            for mid, ss in pending_confirm.items():
-                confirmed_modes.add(_mode_key(mid, ss))
-            pending_confirm = {}
-
-    async def _switch_with_revert(state: bool, targets: Dict[str, ScreenSettings]) -> None:
-        nonlocal pending_revert, pending_confirm
+    async def _do_switch(state: bool) -> None:
         assert current_config is not None
-        if _needs_revert(targets):
-            prev = _snapshot_current_settings(display_map, current_config)
-            await switch_rate(state, current_config, display_map)
-            pending_confirm = targets
-            pending_revert = asyncio.create_task(_revert_after_timeout(prev, display_map))
-        else:
-            await switch_rate(state, current_config, display_map)
+        targets = _target_modes(state)
+        filtered_map = {mid: display_map[mid] for mid in targets if mid in display_map}
+        await switch_rate(state, current_config, filtered_map)
+
+    _refresh_tray_displays()
 
     while not _shutdown_event.is_set():
         try:
@@ -257,17 +283,15 @@ async def srr_loop() -> None:
         except asyncio.TimeoutError:
             pass
 
-        # One full TIME_STEP passed without issues — confirm the previous switch
-        _confirm_pending()
-
         if _reload_event.is_set():
             _reload_event.clear()
             current_config = await load_config(force=True)
             display_map = build_display_map()
+            _refresh_tray_displays()
             if current_config is not None:
                 state = cur_power_state()
                 if state is not None:
-                    await _switch_with_revert(state, _target_modes(state))
+                    await _do_switch(state)
 
         if _tray is not None and _tray.paused:
             continue
@@ -278,17 +302,18 @@ async def srr_loop() -> None:
             counter = 0
             new_config = await load_config()
             display_map = build_display_map()
+            _refresh_tray_displays()
             if new_config is not None and new_config != current_config:
                 current_config = new_config
                 if _tray is not None:
                     _tray.notify("Config reloaded.")
                 if current_state is not None:
-                    await _switch_with_revert(current_state, _target_modes(current_state))
+                    await _do_switch(current_state)
         counter += 1
 
         if current_state != last_state and current_config is not None:
             if current_state is not None:
-                await _switch_with_revert(current_state, _target_modes(current_state))
+                await _do_switch(current_state)
             if _tray is not None:
                 _tray.set_state_text(_state_label(current_state))
 
@@ -361,7 +386,6 @@ def _ensure_config() -> None:
         try:
             with open(PATH_CONFIG, "r") as f:
                 existing = json.load(f)
-            # detect old flat format and discard it
             if "performance-state" in existing or "powersave-state" in existing:
                 logging.info("old config format detected — rebuilding")
                 existing = {}

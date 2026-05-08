@@ -1,6 +1,7 @@
 import ctypes
 import ctypes.wintypes
 import enum
+import winreg
 
 user32 = ctypes.windll.user32
 
@@ -243,6 +244,40 @@ def set_resolution(width: int, height: int, freq: int, adapter_name) -> int:
     return user32.ChangeDisplaySettingsExA(
         adapter_name, ctypes.byref(dm), None, 0, None
     )
+
+
+def get_monitor_friendly_name(monitor_id: str) -> str | None:
+    """
+    Read the monitor name string from EDID stored in the registry.
+    Returns e.g. 'LG ULTRAFINE' or None if unavailable.
+    monitor_id: value from get_active_displays(), e.g. 'MONITOR\\LGD0521\\4&abc&0&UID0'
+    """
+    parts = [p for p in monitor_id.split("\\") if p]
+    if len(parts) < 3:
+        return None
+    model, instance = parts[1], parts[2]
+    reg_path = (
+        f"SYSTEM\\CurrentControlSet\\Enum\\DISPLAY\\{model}\\{instance}"
+        "\\Device Parameters"
+    )
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, reg_path) as key:
+            edid_data, _ = winreg.QueryValueEx(key, "EDID")
+    except OSError:
+        return None
+
+    if len(edid_data) < 128:
+        return None
+
+    # Scan the 4 descriptor blocks (offset 54, each 18 bytes) for tag 0xFC (monitor name)
+    for i in range(4):
+        base = 54 + i * 18
+        if edid_data[base:base + 3] == b"\x00\x00\x00" and edid_data[base + 3] == 0xFC:
+            raw = edid_data[base + 5 : base + 18]
+            name = raw.decode("ascii", errors="replace").split("\n")[0].strip()
+            return name or None
+
+    return None
 
 
 if __name__ == "__main__":
