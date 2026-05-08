@@ -8,7 +8,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import Dict, Iterator, Optional, Tuple
+from typing import Dict, Iterator, Optional, Set, Tuple
 
 import psutil
 from winotify import Notification
@@ -212,6 +212,43 @@ async def srr_loop() -> None:
         _tray.set_state_text(_state_label(last_state))
     counter = 0
     pending_revert: Optional[asyncio.Task] = None
+    pending_confirm: Dict[str, ScreenSettings] = {}
+    confirmed_modes: Set[Tuple[str, int, int, int]] = set()
+
+    def _mode_key(monitor_id: str, ss: ScreenSettings) -> Tuple[str, int, int, int]:
+        return (monitor_id, ss.width, ss.height, ss.refresh_rate)
+
+    def _target_modes(state: bool) -> Dict[str, ScreenSettings]:
+        if current_config is None:
+            return {}
+        return {
+            mid: (perf if state else psav)
+            for mid, (perf, psav) in current_config.items()
+            if display_map.get(mid) is not None
+        }
+
+    def _needs_revert(targets: Dict[str, ScreenSettings]) -> bool:
+        return any(_mode_key(mid, ss) not in confirmed_modes for mid, ss in targets.items())
+
+    def _confirm_pending() -> None:
+        nonlocal pending_revert, pending_confirm
+        if pending_revert is not None and not pending_revert.done():
+            pending_revert.cancel()
+            pending_revert = None
+            for mid, ss in pending_confirm.items():
+                confirmed_modes.add(_mode_key(mid, ss))
+            pending_confirm = {}
+
+    async def _switch_with_revert(state: bool, targets: Dict[str, ScreenSettings]) -> None:
+        nonlocal pending_revert, pending_confirm
+        assert current_config is not None
+        if _needs_revert(targets):
+            prev = _snapshot_current_settings(display_map, current_config)
+            await switch_rate(state, current_config, display_map)
+            pending_confirm = targets
+            pending_revert = asyncio.create_task(_revert_after_timeout(prev, display_map))
+        else:
+            await switch_rate(state, current_config, display_map)
 
     while not _shutdown_event.is_set():
         try:
@@ -221,20 +258,16 @@ async def srr_loop() -> None:
             pass
 
         # One full TIME_STEP passed without issues — confirm the previous switch
-        if pending_revert is not None and not pending_revert.done():
-            pending_revert.cancel()
-            pending_revert = None
+        _confirm_pending()
 
         if _reload_event.is_set():
             _reload_event.clear()
             current_config = await load_config(force=True)
             display_map = build_display_map()
             if current_config is not None:
-                prev = _snapshot_current_settings(display_map, current_config)
-                await switch_rate(cur_power_state(), current_config, display_map)
-                pending_revert = asyncio.create_task(
-                    _revert_after_timeout(prev, display_map)
-                )
+                state = cur_power_state()
+                if state is not None:
+                    await _switch_with_revert(state, _target_modes(state))
 
         if _tray is not None and _tray.paused:
             continue
@@ -249,19 +282,13 @@ async def srr_loop() -> None:
                 current_config = new_config
                 if _tray is not None:
                     _tray.notify("Config reloaded.")
-                prev = _snapshot_current_settings(display_map, current_config)
-                await switch_rate(current_state, current_config, display_map)
-                pending_revert = asyncio.create_task(
-                    _revert_after_timeout(prev, display_map)
-                )
+                if current_state is not None:
+                    await _switch_with_revert(current_state, _target_modes(current_state))
         counter += 1
 
         if current_state != last_state and current_config is not None:
-            prev = _snapshot_current_settings(display_map, current_config)
-            await switch_rate(current_state, current_config, display_map)
-            pending_revert = asyncio.create_task(
-                _revert_after_timeout(prev, display_map)
-            )
+            if current_state is not None:
+                await _switch_with_revert(current_state, _target_modes(current_state))
             if _tray is not None:
                 _tray.set_state_text(_state_label(current_state))
 
