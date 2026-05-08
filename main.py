@@ -21,6 +21,7 @@ from tray import TrayController
 # constants
 TIME_STEP = 5  # seconds
 CONFIG_RELOAD_EVERY = 6  # iterations -> ~30 s
+REVERT_TIMEOUT = 15  # seconds before auto-reverting a display change
 
 PROJECT_NAME = "SRR"
 PROJECT_EXECUTABLE = PROJECT_NAME + ".exe"
@@ -165,6 +166,40 @@ def _state_label(state: Optional[bool]) -> str:
     return "AC (performance)" if state else "Battery (powersave)"
 
 
+def _snapshot_current_settings(
+    display_map: Dict[str, bytes],
+    config: Dict[str, Tuple[ScreenSettings, ScreenSettings]],
+) -> Dict[str, ScreenSettings]:
+    snapshot: Dict[str, ScreenSettings] = {}
+    for monitor_id in config:
+        adapter = display_map.get(monitor_id)
+        if adapter is None:
+            continue
+        try:
+            w, h, f = reschanger.get_display_settings(
+                adapter, reschanger.ENUM_CURRENT_SETTINGS
+            )
+            snapshot[monitor_id] = ScreenSettings(w, h, f)
+        except Exception as e:
+            logging.warning(f"snapshot failed for {monitor_id!r}: {e}")
+    return snapshot
+
+
+async def _revert_after_timeout(
+    prev: Dict[str, ScreenSettings],
+    display_map: Dict[str, bytes],
+) -> None:
+    await asyncio.sleep(REVERT_TIMEOUT)
+    logging.warning("revert timer fired — restoring previous display settings")
+    for monitor_id, ss in prev.items():
+        adapter = display_map.get(monitor_id)
+        if adapter is None:
+            continue
+        await change_screen_settings(ss, adapter)
+    if _tray is not None:
+        _tray.notify("Display settings reverted — screen may have gone dark.")
+
+
 async def srr_loop() -> None:
     assert _shutdown_event is not None
     assert _reload_event is not None
@@ -176,6 +211,7 @@ async def srr_loop() -> None:
     if _tray is not None:
         _tray.set_state_text(_state_label(last_state))
     counter = 0
+    pending_revert: Optional[asyncio.Task] = None
 
     while not _shutdown_event.is_set():
         try:
@@ -184,12 +220,21 @@ async def srr_loop() -> None:
         except asyncio.TimeoutError:
             pass
 
+        # One full TIME_STEP passed without issues — confirm the previous switch
+        if pending_revert is not None and not pending_revert.done():
+            pending_revert.cancel()
+            pending_revert = None
+
         if _reload_event.is_set():
             _reload_event.clear()
             current_config = await load_config(force=True)
             display_map = build_display_map()
             if current_config is not None:
+                prev = _snapshot_current_settings(display_map, current_config)
                 await switch_rate(cur_power_state(), current_config, display_map)
+                pending_revert = asyncio.create_task(
+                    _revert_after_timeout(prev, display_map)
+                )
 
         if _tray is not None and _tray.paused:
             continue
@@ -204,11 +249,19 @@ async def srr_loop() -> None:
                 current_config = new_config
                 if _tray is not None:
                     _tray.notify("Config reloaded.")
+                prev = _snapshot_current_settings(display_map, current_config)
                 await switch_rate(current_state, current_config, display_map)
+                pending_revert = asyncio.create_task(
+                    _revert_after_timeout(prev, display_map)
+                )
         counter += 1
 
         if current_state != last_state and current_config is not None:
+            prev = _snapshot_current_settings(display_map, current_config)
             await switch_rate(current_state, current_config, display_map)
+            pending_revert = asyncio.create_task(
+                _revert_after_timeout(prev, display_map)
+            )
             if _tray is not None:
                 _tray.set_state_text(_state_label(current_state))
 
