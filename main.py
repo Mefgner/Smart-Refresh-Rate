@@ -8,7 +8,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import AnyStr, Dict, Optional, SupportsInt, Tuple
+from typing import Dict, Iterator, Optional, Tuple
 
 import psutil
 
@@ -24,7 +24,7 @@ CONFIG_RELOAD_EVERY = 6  # iterations -> ~30 s
 PROJECT_NAME = "SRR"
 PROJECT_EXECUTABLE = PROJECT_NAME + ".exe"
 
-PATH_APPDATA_LOCAL = Path(os.getenv("LOCALAPPDATA")).resolve()
+PATH_APPDATA_LOCAL = Path(os.environ["LOCALAPPDATA"]).resolve()
 PATH_TO_PROGRAM = PATH_APPDATA_LOCAL / PROJECT_NAME
 PATH_CURRENT_FILE = Path(sys.argv[0]).resolve()
 PATH_BASE_DIR = PATH_CURRENT_FILE.parent
@@ -47,7 +47,7 @@ class ScreenSettings:
     height: int
     refresh_rate: int
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[int]:
         return iter([self.width, self.height, self.refresh_rate])
 
 
@@ -77,7 +77,7 @@ def cur_power_state() -> Optional[bool]:
     return bool(bat.power_plugged)
 
 
-def cur_monitor_specs() -> Dict[AnyStr, Dict[AnyStr, SupportsInt]]:
+def cur_monitor_specs() -> Dict[str, Dict[str, int]]:
     logging.info("Getting current monitor specs")
     width, height, rr_max, rr_min = reschanger.get_resolution()
     return {
@@ -143,6 +143,8 @@ def _state_label(state: Optional[bool]) -> str:
 
 
 async def srr_loop() -> None:
+    assert _shutdown_event is not None
+    assert _reload_event is not None
     last_state = cur_power_state()
     current_config = await load_config()
     if _tray is not None:
@@ -185,7 +187,7 @@ async def srr_loop() -> None:
         last_state = current_state
 
 
-async def get_processes(app_name: AnyStr):
+async def get_processes(app_name: str):
     out = []
     for p in psutil.process_iter(["pid", "name", "exe"]):
         try:
@@ -256,6 +258,8 @@ async def srr():
     loop = asyncio.get_running_loop()
     _shutdown_event = asyncio.Event()
     _reload_event = asyncio.Event()
+    _shutdown_ev = _shutdown_event
+    _reload_ev = _reload_event
 
     def _request_exit():
         logging.info("shutdown requested")
@@ -263,10 +267,10 @@ async def srr():
             reschanger.set_display_defaults()
         except Exception as e:
             logging.warning(f"set_display_defaults failed: {e}")
-        loop.call_soon_threadsafe(_shutdown_event.set)
+        loop.call_soon_threadsafe(_shutdown_ev.set)
 
     def _request_reload():
-        loop.call_soon_threadsafe(_reload_event.set)
+        loop.call_soon_threadsafe(_reload_ev.set)
 
     _tray = TrayController(
         project_name=PROJECT_NAME,

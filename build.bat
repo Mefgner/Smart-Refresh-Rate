@@ -1,5 +1,5 @@
 if not exist .venv (
-    python -m venv .venv
+    py -3.12 -m venv .venv
     .\.venv\Scripts\pip3.exe install -r requirements.txt
     .\.venv\Scripts\pip3.exe install pyinstaller
 )

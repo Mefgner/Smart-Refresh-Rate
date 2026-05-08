@@ -3,9 +3,12 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 import pystray
+
+if TYPE_CHECKING:
+    from pystray._base import Icon as _Icon
 from PIL import Image, ImageDraw
 
 import autostart
@@ -56,7 +59,7 @@ class TrayController:
         self.state_text = "starting…"
 
         self._icon_image = _load_icon(icon_path)
-        self._icon: Optional[pystray.Icon] = None
+        self._icon: Optional[_Icon] = None
         self._thread: Optional[threading.Thread] = None
 
     # --- menu actions -------------------------------------------------
@@ -134,12 +137,13 @@ class TrayController:
         )
 
     def start(self):
-        self._icon = pystray.Icon(
+        icon = pystray.Icon(
             self.project_name,
             self._icon_image,
             f"SRR — {self.state_text}",
             menu=self._build_menu(),
         )
-        self._thread = threading.Thread(target=self._icon.run, daemon=True, name="srr-tray")
+        self._icon = icon
+        self._thread = threading.Thread(target=icon.run, daemon=True, name="srr-tray")
         self._thread.start()
         logging.info("tray icon started")
