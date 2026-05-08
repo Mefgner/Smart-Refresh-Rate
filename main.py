@@ -30,7 +30,14 @@ PATH_CURRENT_FILE = Path(sys.argv[0]).resolve()
 PATH_BASE_DIR = PATH_CURRENT_FILE.parent
 PATH_CONFIG = PATH_TO_PROGRAM / "config.json"
 PATH_LOG = PATH_TO_PROGRAM / "logs.txt"
-PATH_ICON = PATH_BASE_DIR / "assets" / "icon.png"
+
+
+def _resource_path(rel: str) -> Path:
+    base = Path(getattr(sys, "_MEIPASS", PATH_BASE_DIR))
+    return base / rel
+
+
+PATH_ICON = _resource_path("assets/icon.png")
 
 # runtime state
 _shutdown_event: Optional[asyncio.Event] = None
