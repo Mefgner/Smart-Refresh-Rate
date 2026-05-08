@@ -26,8 +26,8 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install pyinstaller
-          pyinstaller --uac-admin --onefile --clean --noconsole --optimize 1 main.py
-          Move-Item -Path .\dist\main.exe -Destination ".\SRR_v${{ github.event.inputs.version }}_win64.exe"
+          pyinstaller --uac-admin --onefile --clean --noconsole --optimize 1 -n SRR --add-data "assets/icon.png;assets" main.py
+          Move-Item -Path .\dist\SRR.exe -Destination ".\SRR_v${{ github.event.inputs.version }}_win64.exe"
 
       - name: Release
         if: github.ref == 'refs/heads/main'
@@ -38,6 +38,6 @@ jobs:
           name: v${{ github.event.inputs.release_name }}
           tag_name: v${{ github.event.inputs.tagname }}
           draft: false
-          generate_release_notes: true
+          generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.PAT }}
