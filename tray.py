@@ -27,7 +27,7 @@ def _make_default_icon() -> Image.Image:
 def _load_icon(icon_path: Optional[Path]) -> Image.Image:
     if icon_path and icon_path.exists():
         try:
-            return Image.open(str(icon_path))
+            return Image.open(str(icon_path)).convert("RGBA")
         except Exception as e:
             logging.warning(f"failed to load tray icon {icon_path}: {e}")
     return _make_default_icon()
