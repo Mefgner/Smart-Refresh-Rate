@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, Iterator, Optional, Tuple
 
 import psutil
+from winotify import Notification
 
 import autostart
 import reschanger
@@ -260,12 +261,11 @@ async def install():
         logging.error(f"failed to launch installed copy: {e}")
         raise
 
-    ctypes.windll.user32.MessageBoxW(
-        None,
-        "SRR was installed and now runs in background. A tray icon will appear.",
-        "Info",
-        0x00000040,
-    )
+    Notification(
+        app_id=PROJECT_NAME,
+        title="SRR installed",
+        msg="SRR now runs in background. A tray icon will appear.",
+    ).show()
     sys.exit(0)
 
 
