@@ -14,3 +14,5 @@ SRR runs with a system tray icon. Right-click it and choose **Exit**. From the s
 
 ### How heavy is it on the CPU?
 SRR polls power state once every 5 seconds and only reads `config.json` when its mtime changes (or on demand from the tray menu), so idle CPU usage is effectively 0%.
+
+<a href="https://www.flaticon.com/free-icons/ekg-monitor" title="monitor icons">Monitor icons created by Maniprasanth - Flaticon</a>
