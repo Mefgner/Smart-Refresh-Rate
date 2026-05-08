@@ -18,7 +18,7 @@ from reschanger import DISP_RESULTS
 from tray import TrayController
 
 # constants
-TIME_STEP = 5  # seconds; raised from 1 to reduce idle CPU usage
+TIME_STEP = 5  # seconds
 CONFIG_RELOAD_EVERY = 6  # iterations -> ~30 s
 
 PROJECT_NAME = "SRR"
@@ -37,7 +37,7 @@ _shutdown_event: Optional[asyncio.Event] = None
 _reload_event: Optional[asyncio.Event] = None
 _tray: Optional[TrayController] = None
 
-config_last_state = None
+config_last_state: Optional[Dict[str, Tuple["ScreenSettings", "ScreenSettings"]]] = None
 config_last_update = None
 
 
@@ -77,16 +77,16 @@ def cur_power_state() -> Optional[bool]:
     return bool(bat.power_plugged)
 
 
-def cur_monitor_specs() -> Dict[str, Dict[str, int]]:
-    logging.info("Getting current monitor specs")
-    width, height, rr_max, rr_min = reschanger.get_resolution()
+def build_display_map() -> Dict[str, bytes]:
+    """Returns {monitor_id: adapter_name} for all currently active displays."""
     return {
-        "powersave-state": {"width": width, "height": height, "refresh_rate": rr_min},
-        "performance-state": {"width": width, "height": height, "refresh_rate": rr_max},
+        d["monitor_id"]: d["adapter_name"] for d in reschanger.get_active_displays()
     }
 
 
-async def load_config(force: bool = False) -> Optional[Tuple[ScreenSettings, ScreenSettings]]:
+async def load_config(
+    force: bool = False,
+) -> Optional[Dict[str, Tuple[ScreenSettings, ScreenSettings]]]:
     global config_last_state, config_last_update
     try:
         update_time = os.path.getmtime(PATH_CONFIG)
@@ -99,9 +99,13 @@ async def load_config(force: bool = False) -> Optional[Tuple[ScreenSettings, Scr
 
     try:
         with open(PATH_CONFIG, "r") as f:
-            params = json.load(f)
-        performance_state = ScreenSettings(**params["performance-state"])
-        powersave_state = ScreenSettings(**params["powersave-state"])
+            raw = json.load(f)
+
+        result: Dict[str, Tuple[ScreenSettings, ScreenSettings]] = {}
+        for monitor_id, entry in raw.items():
+            perf = ScreenSettings(**entry["performance-state"])
+            psav = ScreenSettings(**entry["powersave-state"])
+            result[monitor_id] = (perf, psav)
     except (json.JSONDecodeError, KeyError, TypeError) as e:
         logging.error(f"config parse failed, keeping previous: {e}")
         if _tray is not None:
@@ -109,31 +113,42 @@ async def load_config(force: bool = False) -> Optional[Tuple[ScreenSettings, Scr
         return config_last_state
 
     config_last_update = update_time
-    config_last_state = (performance_state, powersave_state)
+    config_last_state = result
     return config_last_state
 
 
-async def change_screen_settings(ss: ScreenSettings) -> None:
-    logging.info(f"Changing screen settings to {ss}")
-    res = reschanger.set_resolution(*ss)
+async def change_screen_settings(ss: ScreenSettings, adapter_name: bytes) -> None:
+    logging.info(f"Changing {adapter_name!r} to {ss}")
+    res = reschanger.set_resolution(*ss, adapter_name=adapter_name)
 
     if res == DISP_RESULTS.DISP_CHANGE_BADPARAM:
-        msg = "Parameters in config.json are not a supported display mode."
+        msg = f"Unsupported display mode in config.json for {adapter_name!r}."
         logging.error(msg)
         if _tray is not None:
             _tray.notify(msg)
         return
 
     if res != DISP_RESULTS.DISP_CHANGE_SUCCESSFUL:
-        logging.warning(f"set_resolution returned {res}; retrying after 10s")
+        logging.warning(
+            f"set_resolution returned {res} for {adapter_name!r}; retrying after 10s"
+        )
         await asyncio.sleep(10)
-        reschanger.set_resolution(*ss)
+        reschanger.set_resolution(*ss, adapter_name=adapter_name)
 
 
-async def switch_rate(current_state: Optional[bool], prss: ScreenSettings, psss: ScreenSettings):
+async def switch_rate(
+    current_state: Optional[bool],
+    config: Dict[str, Tuple[ScreenSettings, ScreenSettings]],
+    display_map: Dict[str, bytes],
+) -> None:
     if current_state is None:
         return
-    await change_screen_settings(prss if current_state else psss)
+    for monitor_id, (perf, powersave) in config.items():
+        adapter_name = display_map.get(monitor_id)
+        if adapter_name is None:
+            logging.debug(f"monitor {monitor_id!r} not active, skipping")
+            continue
+        await change_screen_settings(perf if current_state else powersave, adapter_name)
 
 
 def _state_label(state: Optional[bool]) -> str:
@@ -145,8 +160,11 @@ def _state_label(state: Optional[bool]) -> str:
 async def srr_loop() -> None:
     assert _shutdown_event is not None
     assert _reload_event is not None
+
     last_state = cur_power_state()
     current_config = await load_config()
+    display_map = build_display_map()
+
     if _tray is not None:
         _tray.set_state_text(_state_label(last_state))
     counter = 0
@@ -161,8 +179,9 @@ async def srr_loop() -> None:
         if _reload_event.is_set():
             _reload_event.clear()
             current_config = await load_config(force=True)
+            display_map = build_display_map()
             if current_config is not None:
-                await switch_rate(cur_power_state(), *current_config)
+                await switch_rate(cur_power_state(), current_config, display_map)
 
         if _tray is not None and _tray.paused:
             continue
@@ -172,15 +191,16 @@ async def srr_loop() -> None:
         if counter >= CONFIG_RELOAD_EVERY:
             counter = 0
             new_config = await load_config()
+            display_map = build_display_map()
             if new_config is not None and new_config != current_config:
                 current_config = new_config
                 if _tray is not None:
                     _tray.notify("Config reloaded.")
-                await switch_rate(current_state, *current_config)
+                await switch_rate(current_state, current_config, display_map)
         counter += 1
 
         if current_state != last_state and current_config is not None:
-            await switch_rate(current_state, *current_config)
+            await switch_rate(current_state, current_config, display_map)
             if _tray is not None:
                 _tray.set_state_text(_state_label(current_state))
 
@@ -242,11 +262,53 @@ async def install():
     sys.exit(0)
 
 
-def _ensure_config():
-    if not PATH_CONFIG.exists():
-        logging.info("creating default config.json")
+def _ensure_config() -> None:
+    """
+    Create or update config.json.
+    Each active display gets an entry keyed by its stable monitor DeviceID.
+    Existing entries are never overwritten — only new displays are appended.
+    Old flat-format configs (pre-multimonitor) are discarded and rebuilt.
+    """
+    existing: dict = {}
+    if PATH_CONFIG.exists():
+        try:
+            with open(PATH_CONFIG, "r") as f:
+                existing = json.load(f)
+            # detect old flat format and discard it
+            if "performance-state" in existing or "powersave-state" in existing:
+                logging.info("old config format detected — rebuilding")
+                existing = {}
+        except Exception as e:
+            logging.warning(f"could not read existing config: {e}")
+            existing = {}
+
+    changed = False
+    for disp in reschanger.get_active_displays():
+        mid = disp["monitor_id"]
+        if mid in existing:
+            continue
+
+        adapter = disp["adapter_name"]
+        try:
+            w, h, freq = reschanger.get_display_settings(
+                adapter, reschanger.ENUM_REGISTRY_SETTINGS
+            )
+        except RuntimeError as e:
+            logging.warning(f"could not read registry settings for {mid!r}: {e}")
+            continue
+
+        bat_freq = reschanger.best_powersave_freq(adapter, w, h)
+        existing[mid] = {
+            "performance-state": {"width": w, "height": h, "refresh_rate": freq},
+            "powersave-state": {"width": w, "height": h, "refresh_rate": bat_freq},
+        }
+        logging.info(f"added display {mid!r} ({disp['monitor_string']!r}) to config")
+        changed = True
+
+    if changed or not PATH_CONFIG.exists():
+        PATH_TO_PROGRAM.mkdir(parents=True, exist_ok=True)
         with open(PATH_CONFIG, "w") as f:
-            json.dump(cur_monitor_specs(), f, indent=4)
+            json.dump(existing, f, indent=4)
 
 
 async def srr():
@@ -264,7 +326,8 @@ async def srr():
     def _request_exit():
         logging.info("shutdown requested")
         try:
-            reschanger.set_display_defaults()
+            adapter_names = list(build_display_map().values())
+            reschanger.set_display_defaults(adapter_names)
         except Exception as e:
             logging.warning(f"set_display_defaults failed: {e}")
         loop.call_soon_threadsafe(_shutdown_ev.set)
@@ -285,7 +348,7 @@ async def srr():
 
     cfg = await load_config()
     if cfg is not None:
-        await switch_rate(cur_power_state(), *cfg)
+        await switch_rate(cur_power_state(), cfg, build_display_map())
 
     await srr_loop()
 

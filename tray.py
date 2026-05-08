@@ -1,4 +1,5 @@
 """System tray icon for SRR. Runs pystray in a separate thread."""
+
 import logging
 import os
 import threading
@@ -117,7 +118,9 @@ class TrayController:
 
     def _build_menu(self) -> pystray.Menu:
         return pystray.Menu(
-            pystray.MenuItem(lambda item: f"Status: {self.state_text}", None, enabled=False),
+            pystray.MenuItem(
+                lambda item: f"Status: {self.state_text}", None, enabled=False
+            ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(
                 lambda item: "Resume" if self.paused else "Pause",

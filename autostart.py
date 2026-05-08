@@ -1,4 +1,5 @@
 """Windows autostart management via HKCU Run registry key."""
+
 import logging
 from pathlib import Path
 
