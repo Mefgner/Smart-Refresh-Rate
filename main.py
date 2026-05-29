@@ -6,6 +6,7 @@ import logging
 import logging.handlers
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, Iterator, Optional, Tuple
@@ -23,7 +24,9 @@ TIME_STEP = 5  # seconds
 CONFIG_RELOAD_EVERY = 6  # iterations -> ~30 s
 
 PROJECT_NAME = "SRR"
+PROJECT_DISPLAY_NAME = "Smart Refresh Rate"
 PROJECT_EXECUTABLE = PROJECT_NAME + ".exe"
+UNINSTALL_REG_KEY = rf"Software\Microsoft\Windows\CurrentVersion\Uninstall\{PROJECT_NAME}"
 
 PATH_APPDATA_LOCAL = Path(os.environ["LOCALAPPDATA"]).resolve()
 PATH_TO_PROGRAM = PATH_APPDATA_LOCAL / PROJECT_NAME
@@ -334,6 +337,80 @@ async def get_processes(app_name: str):
     return out
 
 
+def _register_uninstall(target_exe: Path) -> None:
+    try:
+        import winreg
+        uninstall_cmd = f'"{target_exe}" --uninstall'
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, UNINSTALL_REG_KEY) as key:
+            winreg.SetValueEx(key, "DisplayName",     0, winreg.REG_SZ,    PROJECT_DISPLAY_NAME)
+            winreg.SetValueEx(key, "UninstallString", 0, winreg.REG_SZ,    uninstall_cmd)
+            winreg.SetValueEx(key, "DisplayIcon",     0, winreg.REG_SZ,    f'"{target_exe}",0')
+            winreg.SetValueEx(key, "InstallLocation", 0, winreg.REG_SZ,    str(target_exe.parent))
+            winreg.SetValueEx(key, "NoModify",        0, winreg.REG_DWORD, 1)
+            winreg.SetValueEx(key, "NoRepair",        0, winreg.REG_DWORD, 1)
+        logging.info("uninstall registry entry registered")
+    except Exception as e:
+        logging.warning(f"_register_uninstall failed: {e}")
+
+
+def _uninstall() -> None:
+    target_exe = PATH_TO_PROGRAM / PROJECT_EXECUTABLE
+
+    for p in psutil.process_iter(["pid", "name", "exe"]):
+        try:
+            if p.info["name"] == PROJECT_EXECUTABLE and p.pid != os.getpid():
+                p.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    autostart.disable(PROJECT_NAME)
+
+    start_menu = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+    shortcut = start_menu / f"{PROJECT_NAME}.lnk"
+    try:
+        shortcut.unlink(missing_ok=True)
+    except Exception as e:
+        logging.warning(f"shortcut removal failed: {e}")
+
+    try:
+        import winreg
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, UNINSTALL_REG_KEY)
+    except Exception as e:
+        logging.warning(f"uninstall key removal failed: {e}")
+
+    # Delete install dir after process exits — PowerShell runs detached
+    ps_cmd = f'Start-Sleep -Seconds 2; Remove-Item -Recurse -Force "{PATH_TO_PROGRAM}"'
+    subprocess.Popen(
+        ["powershell", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", ps_cmd],
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+
+    ctypes.windll.user32.MessageBoxW(
+        None, f"{PROJECT_DISPLAY_NAME} has been uninstalled.", PROJECT_DISPLAY_NAME, 0x40
+    )
+    sys.exit(0)
+
+
+def _create_start_menu_shortcut(target_exe: Path) -> None:
+    start_menu = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+    shortcut = start_menu / f"{PROJECT_NAME}.lnk"
+    script = (
+        f'$s=(New-Object -COM WScript.Shell).CreateShortcut("{shortcut}");'
+        f'$s.TargetPath="{target_exe}";'
+        f'$s.WorkingDirectory="{target_exe.parent}";'
+        f'$s.Description="Smart Refresh Rate";'
+        f'$s.Save()'
+    )
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, timeout=10,
+        )
+        logging.info(f"start menu shortcut created: {shortcut}")
+    except Exception as e:
+        logging.warning(f"start menu shortcut failed: {e}")
+
+
 async def install():
     """Copy exe into %LOCALAPPDATA%\\SRR, register autostart, restart from there."""
     if PATH_BASE_DIR == PATH_TO_PROGRAM:
@@ -359,6 +436,8 @@ async def install():
         raise
 
     autostart.enable(PROJECT_NAME, target_exe)
+    _register_uninstall(target_exe)
+    _create_start_menu_shortcut(target_exe)
 
     try:
         os.startfile(str(target_exe))
@@ -485,5 +564,7 @@ def _setup_logging():
 
 
 if __name__ == "__main__":
+    if "--uninstall" in sys.argv:
+        _uninstall()
     _setup_logging()
     asyncio.run(main())
