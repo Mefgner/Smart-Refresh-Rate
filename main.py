@@ -152,7 +152,14 @@ def save_target_display(mid: Optional[str]) -> None:
 
 async def change_screen_settings(ss: ScreenSettings, adapter_name: bytes) -> None:
     logging.info(f"Changing {adapter_name!r} to {ss}")
-    res = reschanger.set_resolution(*ss, adapter_name=adapter_name)
+    try:
+        res = reschanger.set_resolution(*ss, adapter_name=adapter_name)
+    except RuntimeError as e:
+        msg = f"Skipping {adapter_name!r}: {e}"
+        logging.warning(msg)
+        if _tray is not None:
+            _tray.notify(msg)
+        return
 
     if res == DISP_RESULTS.DISP_CHANGE_BADPARAM:
         msg = f"Unsupported display mode in config.json for {adapter_name!r}."

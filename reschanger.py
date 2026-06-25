@@ -137,6 +137,10 @@ def get_active_displays() -> list:
             continue
 
         adapter_name = dd_adapter.DeviceName  # bytes
+        try:
+            get_display_settings(adapter_name, ENUM_CURRENT_SETTINGS)
+        except RuntimeError:
+            continue
 
         dd_monitor = DISPLAY_DEVICE()
         dd_monitor.cb = ctypes.sizeof(dd_monitor)
