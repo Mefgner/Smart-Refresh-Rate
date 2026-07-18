@@ -152,13 +152,19 @@ def save_target_display(mid: Optional[str]) -> None:
 
 async def change_screen_settings(ss: ScreenSettings, adapter_name: bytes) -> None:
     logging.info(f"Changing {adapter_name!r} to {ss}")
-    try:
-        res = reschanger.set_resolution(*ss, adapter_name=adapter_name)
-    except RuntimeError as e:
-        msg = f"Skipping {adapter_name!r}: {e}"
-        logging.warning(msg)
-        if _tray is not None:
-            _tray.notify(msg)
+
+    def _set_resolution() -> Optional[int]:
+        try:
+            return reschanger.set_resolution(*ss, adapter_name=adapter_name)
+        except RuntimeError as e:
+            msg = f"Skipping {adapter_name!r}: {e}"
+            logging.warning(msg)
+            if _tray is not None:
+                _tray.notify(msg)
+            return None
+
+    res = _set_resolution()
+    if res is None:
         return
 
     if res == DISP_RESULTS.DISP_CHANGE_BADPARAM:
@@ -173,7 +179,7 @@ async def change_screen_settings(ss: ScreenSettings, adapter_name: bytes) -> Non
             f"set_resolution returned {res} for {adapter_name!r}; retrying after 10s"
         )
         await asyncio.sleep(10)
-        reschanger.set_resolution(*ss, adapter_name=adapter_name)
+        _set_resolution()
 
 
 async def switch_rate(
