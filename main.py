@@ -179,7 +179,11 @@ async def change_screen_settings(ss: ScreenSettings, adapter_name: bytes) -> Non
             f"set_resolution returned {res} for {adapter_name!r}; retrying after 10s"
         )
         await asyncio.sleep(10)
-        _set_resolution()
+        retry_res = _set_resolution()
+        if retry_res not in (None, DISP_RESULTS.DISP_CHANGE_SUCCESSFUL):
+            logging.warning(
+                f"retry set_resolution returned {retry_res} for {adapter_name!r}"
+            )
 
 
 async def switch_rate(
@@ -285,7 +289,13 @@ async def srr_loop() -> None:
         }
 
     async def _do_switch(state: bool) -> None:
+        nonlocal display_map
         assert current_config is not None
+
+        # A monitor can disappear between the power event and this switch.
+        # Refresh the snapshot so a disconnected adapter is not used.
+        display_map = build_display_map()
+        _refresh_tray_displays()
         targets = _target_modes(state)
         filtered_map = {mid: display_map[mid] for mid in targets if mid in display_map}
         await switch_rate(state, current_config, filtered_map)
