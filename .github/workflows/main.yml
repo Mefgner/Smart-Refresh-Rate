@@ -21,15 +21,34 @@ jobs:
       - name: 'Checkout Repo'
         uses: actions/checkout@v4
       - name: 'Install Python'
-        uses: actions/setup-python@v5 
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: 'Install dependencies'
+        run: pip install -r requirements.txt
 
-      - name: Compile (based on Python x64)
+      - name: 'Build PyInstaller bootloader from source'
+        # The shared prebuilt bootloader is a major cause of antivirus false
+        # positives; a self-compiled one has a unique binary signature.
         run: |
-          pip install -r requirements.txt
-          pip install pyinstaller
-          pyinstaller --onefile --clean --noconsole --optimize 1 -n SRR --add-data "assets/icon.png;assets" main.py
+          git clone --depth 1 --branch v6.22.2 https://github.com/pyinstaller/pyinstaller.git
+          cd pyinstaller/bootloader
+          python ./waf all
+          cd ..
+          pip install .
+
+      - name: 'Generate version info resource'
+        run: |
+          $ver = "${{ github.event.inputs.version }}"
+          $tuple = ($ver -split '\.') -join ', '
+          $content = Get-Content version_info.txt -Raw
+          $content = $content -replace '\d+\.\d+\.\d+\.\d+', $ver
+          $content = $content -replace '\(\d+, \d+, \d+, \d+\)', "($tuple)"
+          Set-Content version_info.txt $content
+
+      - name: 'Compile (based on Python x64)'
+        run: |
+          pyinstaller --onefile --clean --noconsole --version-file version_info.txt -n SRR --add-data "assets/icon.png;assets" main.py
           Move-Item -Path .\dist\SRR.exe -Destination ".\SRR_v${{ github.event.inputs.version }}_win64.exe"
 
       - name: Release
