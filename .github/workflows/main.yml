@@ -40,10 +40,16 @@ jobs:
       - name: 'Generate version info resource'
         run: |
           $ver = "${{ github.event.inputs.version }}"
-          $tuple = ($ver -split '\.') -join ', '
+          # Numeric core (e.g. "1.1.5.0" from "1.1.5.0-pre") feeds the DWORD
+          # tuple, which must be all-numeric; the full version (suffix
+          # included) goes into the FileVersion/ProductVersion strings.
+          $core = ($ver -split '-')[0]
+          $tuple = ($core -split '\.') -join ', '
           $content = Get-Content version_info.txt -Raw
-          $content = $content -replace '\d+\.\d+\.\d+\.\d+', $ver
+          $content = $content -replace '\d+\.\d+\.\d+\.\d+', $core
           $content = $content -replace '\(\d+, \d+, \d+, \d+\)', "($tuple)"
+          $content = $content -replace "'FileVersion', '[^']*'", "'FileVersion', '$ver'"
+          $content = $content -replace "'ProductVersion', '[^']*'", "'ProductVersion', '$ver'"
           Set-Content version_info.txt $content
 
       - name: 'Compile (based on Python x64)'
