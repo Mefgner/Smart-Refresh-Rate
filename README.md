@@ -1,18 +1,73 @@
 # Smart Refresh Rate
-### This small utility that will automatically switch refresh rate of your screen you have chosen when you plug off your charger and sets it back when you plug it in.
+
+A small Windows utility that automatically switches your display's refresh rate: a power-saving mode when the charger is unplugged, and your preferred high-refresh mode when it's plugged back in.
+
+## How it works
+
+- Polls the power state once every 5 seconds.
+- On battery it applies each monitor's `powersave-state` mode; on AC power, its `performance-state` mode.
+- Lives in the system tray. Idle CPU usage is effectively 0% — `config.json` is only re-read when the file changes.
+
+## Requirements
+
+- Windows 10/11 (x64)
+- A laptop with a battery (with no battery info available there is nothing to react to)
+- Administrator rights (requested via UAC on launch)
 
 ## Quick start
-Just install exe and run it whethever you want and it will install it in user folder and add itself to autorun. Also it will create `config.json` file which contains what resolution and min/max refresh rate your monitor has to perform.
 
-## Fast Q/A
+1. Download `SRR.exe` from the [latest release](https://github.com/Mefgner/Smart-Refresh-Rate/releases/latest).
+2. Run it once — it copies itself to `%LOCALAPPDATA%\SRR`, adds itself to autostart, creates a Start Menu shortcut and registers an uninstall entry. After that the downloaded file can be deleted.
+3. On first launch it generates `config.json` from your monitor's current settings and starts working right away.
 
-### What if i want to set anoter settings?
-Just go to path: `%localappdata%\SRR` and edit `config.json`(using notepad or whatever). Programm will auto accept changes.
+## Configuration
 
-### What if i want to close this program?
-SRR runs with a system tray icon. Right-click it and choose **Exit**. From the same menu you can pause/resume the service, reload `config.json`, open the config folder or logs, and toggle **Run at startup** to remove SRR from Windows autostart.
+`%LOCALAPPDATA%\SRR\config.json` contains one entry per monitor, keyed by the monitor's hardware ID:
 
-### How heavy is it on the CPU?
-SRR polls power state once every 5 seconds and only reads `config.json` when its mtime changes (or on demand from the tray menu), so idle CPU usage is effectively 0%.
+```json
+{
+    "MONITOR\\LGD0521\\4&abc&0&UID0": {
+        "performance-state": { "width": 2560, "height": 1440, "refresh_rate": 165 },
+        "powersave-state": { "width": 2560, "height": 1440, "refresh_rate": 60 }
+    }
+}
+```
 
-<a href="https://www.flaticon.com/free-icons/ekg-monitor" title="monitor icons">Monitor icons created by Maniprasanth - Flaticon</a>
+Edit it with any text editor — SRR picks up changes automatically within a few seconds. Monitors connected later are appended to the config automatically.
+
+## FAQ
+
+**How do I change settings?**
+Edit `%LOCALAPPDATA%\SRR\config.json` (the tray menu has an **Open config folder** shortcut), then pick **Reload** — or just wait a few seconds.
+
+**How do I pause or close it?**
+Right-click the tray icon: **Pause/Resume** temporarily disables switching, **Exit** quits. On exit your displays are restored to their default modes. The **Run at startup** checkbox toggles autostart.
+
+**How heavy is it on the CPU?**
+SRR polls the power state once every 5 seconds and only reads `config.json` when its timestamp changes, so idle CPU usage is effectively 0%.
+
+## Antivirus false positives
+
+SRR ships as a single-file executable built with [PyInstaller](https://pyinstaller.org/). PyInstaller-packed binaries are a common target of heuristic antivirus detections, so some antivirus products may flag `SRR.exe` as suspicious even though there is no malware in it. If you see such a warning:
+
+- build the executable yourself from source (see below) — this guarantees the binary matches the code in this repository;
+- or add an exclusion for `SRR.exe` in your antivirus settings;
+- or report the false positive to your antivirus vendor.
+
+## Uninstall
+
+Use **Settings → Apps → Installed apps → Smart Refresh Rate → Uninstall**, or run `%LOCALAPPDATA%\SRR\SRR.exe --uninstall`. This stops the app, removes autostart, the Start Menu shortcut, the registry entry and the install folder, and restores default display modes.
+
+## Building from source
+
+Requires Python 3.12. Run:
+
+```
+build.bat
+```
+
+The script creates a `.venv`, installs dependencies and produces `dist\SRR.exe` via PyInstaller.
+
+## License
+
+[MIT](LICENSE). Monitor icon by [Maniprasanth — Flaticon](https://www.flaticon.com/free-icons/ekg-monitor).

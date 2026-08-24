@@ -181,7 +181,7 @@ class TrayController:
                 lambda item: "Resume" if self.paused else "Pause",
                 self._toggle_pause,
             ),
-            pystray.MenuItem("Reload config", self._reload),
+            pystray.MenuItem("Reload", self._reload),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Open config folder", self._open_config_dir),
             pystray.MenuItem("Open logs", self._open_logs),
