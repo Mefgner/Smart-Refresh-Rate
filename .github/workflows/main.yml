@@ -35,19 +35,24 @@ jobs:
         # system msvcrt.dll instead of the redistributable Universal CRT.
         run: |
           git clone --depth 1 --branch v6.22.2 https://github.com/pyinstaller/pyinstaller.git
+
+          # PyInstaller always bundles ucrtbase.dll/api-ms-win-* if it finds
+          # them on the build machine (depend/dylib.py _win_includes). Windows
+          # Server runners ship physical api-ms-* stubs in System32, so without
+          # this patch they end up in the exe (~1 MB of DLLs that are redundant
+          # on Windows 10+, the minimum supported OS per the README).
+          $f = "pyinstaller\PyInstaller\depend\dylib.py"
+          $c = Get-Content $f -Raw
+          $c = $c.Replace("r'api-ms-win-core.*',", "# r'api-ms-win-core.*',")
+          $c = $c.Replace("r'api-ms-win-crt.*',", "# r'api-ms-win-crt.*',")
+          $c = $c.Replace("r'ucrtbase\.dll',", "# r'ucrtbase\.dll',")
+          Set-Content $f $c
+          Select-String -Path $f -Pattern "# r'(api-ms|ucrtbase)" | Select-Object -ExpandProperty Line
+
           cd pyinstaller/bootloader
           python ./waf all --gcc
           cd ..
           pip install .
-
-      - name: 'Remove UCRT redistributables from runner'
-        # PyInstaller bundles ucrtbase.dll/api-ms-win-* whenever it finds
-        # them on the build machine. They are redundant on Windows 10+ (UCRT
-        # is a system component there), so remove the SDK copy to keep the
-        # bundle lean. Skipped gracefully if not present.
-        run: |
-          $ucrt = "C:\Program Files (x86)\Windows Kits\10\Redist\ucrt"
-          if (Test-Path $ucrt) { Remove-Item $ucrt -Recurse -Force; "UCRT redist removed" } else { "UCRT redist not found - skipping" }
 
       - name: 'Generate version info resource'
         run: |
