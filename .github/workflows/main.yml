@@ -27,28 +27,27 @@ jobs:
       - name: 'Install dependencies'
         run: pip install -r requirements.txt
 
-      - name: 'Install MinGW-w64 (UCRT)'
-        # Matches the local build setup: a MinGW-built bootloader links
-        # against the system msvcrt.dll, so PyInstaller does not bundle the
-        # Universal CRT (smaller exe) and the binary differs from the shared
-        # prebuilt one (fewer AV false positives).
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: UCRT64
-          update: false
-          install: mingw-w64-ucrt-x86_64-gcc
-          add-to-path: true
-
       - name: 'Build PyInstaller bootloader from source'
         # The shared prebuilt bootloader is a major cause of antivirus false
         # positives; a self-compiled one has a unique binary signature.
-        # --gcc forces MinGW even though MSVC is also present on the runner.
+        # --gcc forces MinGW (preinstalled at C:\mingw64 on the runner) even
+        # though MSVC is also present; a MinGW bootloader links against the
+        # system msvcrt.dll instead of the redistributable Universal CRT.
         run: |
           git clone --depth 1 --branch v6.22.2 https://github.com/pyinstaller/pyinstaller.git
           cd pyinstaller/bootloader
           python ./waf all --gcc
           cd ..
           pip install .
+
+      - name: 'Remove UCRT redistributables from runner'
+        # PyInstaller bundles ucrtbase.dll/api-ms-win-* whenever it finds
+        # them on the build machine. They are redundant on Windows 10+ (UCRT
+        # is a system component there), so remove the SDK copy to keep the
+        # bundle lean. Skipped gracefully if not present.
+        run: |
+          $ucrt = "C:\Program Files (x86)\Windows Kits\10\Redist\ucrt"
+          if (Test-Path $ucrt) { Remove-Item $ucrt -Recurse -Force; "UCRT redist removed" } else { "UCRT redist not found - skipping" }
 
       - name: 'Generate version info resource'
         run: |
