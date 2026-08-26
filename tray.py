@@ -3,6 +3,7 @@
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
@@ -65,6 +66,14 @@ class TrayController:
         self._icon_image = _load_icon(icon_path)
         self._icon: Optional[_Icon] = None
         self._thread: Optional[threading.Thread] = None
+
+        # Double-click detection: pystray Win32 backend has no native
+        # double-click (window class style 0 lacks CS_DBLCLKS, _on_notify
+        # only handles WM_LBUTTONUP / WM_RBUTTONUP). Use timing-based
+        # detection by wrapping Icon.__call__ (invoked on WM_LBUTTONUP)
+        # and measuring interval between activations.
+        self._last_click_ts: float = 0.0
+        self._DOUBLE_CLICK_INTERVAL: float = 0.4  # seconds (<400 ms)
 
     # --- menu actions -------------------------------------------------
 
@@ -196,7 +205,30 @@ class TrayController:
         return pystray.Menu(*items)
 
     def start(self):
-        icon = pystray.Icon(
+        # Double-click handling: pystray Win32 backend has no native
+        # double-click support (window class style=0 lacks CS_DBLCLKS and
+        # _on_notify only dispatches WM_LBUTTONUP/WM_RBUTTONUP). Implement
+        # timing-based detection by intercepting Icon.__call__ (invoked on
+        # WM_LBUTTONUP) — two activations within <400 ms are treated as a
+        # double-click that reloads config; single click delegates to the
+        # original Icon.__call__ to preserve default menu behavior.
+        controller = self
+
+        class _SRRIcon(pystray.Icon):  # type: ignore[misc]
+            def __call__(self):  # type: ignore[override]
+                now = time.monotonic()
+                if now - controller._last_click_ts < controller._DOUBLE_CLICK_INTERVAL:
+                    logging.info("tray: double-click detected — reloading config")
+                    controller._last_click_ts = 0.0
+                    try:
+                        controller._on_reload()
+                    except Exception as e:
+                        logging.warning(f"tray double-click reload failed: {e}")
+                    return
+                controller._last_click_ts = now
+                return super().__call__()
+
+        icon = _SRRIcon(
             self.project_name,
             self._icon_image,
             f"SRR — {self.state_text}",

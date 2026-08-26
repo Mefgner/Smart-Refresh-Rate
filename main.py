@@ -22,6 +22,7 @@ from tray import TrayController
 # constants
 TIME_STEP = 5  # seconds
 CONFIG_RELOAD_EVERY = 6  # iterations -> ~30 s
+RECONCILE_EVERY = 12  # iterations -> ~60 s, rarer than TIME_STEP (D-4, D-7)
 
 PROJECT_NAME = "SRR"
 PROJECT_DISPLAY_NAME = "Smart Refresh Rate"
@@ -250,6 +251,7 @@ async def srr_loop() -> None:
     if _tray is not None:
         _tray.set_state_text(_state_label(last_state))
     counter = 0
+    reconcile_counter = 0
 
     loop = asyncio.get_running_loop()
     managed_display_id: Optional[str] = config_last_target
@@ -336,6 +338,43 @@ async def srr_loop() -> None:
                 if current_state is not None:
                     await _do_switch(current_state)
         counter += 1
+
+        # Sleep-wake reconciliation: at a rarer interval than TIME_STEP
+        # (RECONCILE_EVERY ticks ~60s) compare live current display settings
+        # (ENUM_CURRENT_SETTINGS, not registry) against desired for the
+        # current power state; if mismatched (e.g. after resume without
+        # power toggle) re-apply via _do_switch. No registry write.
+        if reconcile_counter >= RECONCILE_EVERY:
+            reconcile_counter = 0
+            if (
+                current_config is not None
+                and current_state is not None
+                and (_tray is None or not _tray.paused)
+            ):
+                try:
+                    targets = _target_modes(current_state)
+                    needs_reconcile = False
+                    for mid, desired in targets.items():
+                        adapter = display_map.get(mid)
+                        if adapter is None:
+                            continue
+                        try:
+                            w, h, freq = reschanger.get_display_settings(
+                                adapter, reschanger.ENUM_CURRENT_SETTINGS
+                            )
+                        except RuntimeError:
+                            continue
+                        if (w, h, freq) != tuple(desired):
+                            needs_reconcile = True
+                            break
+                    if needs_reconcile:
+                        logging.info(
+                            "reconcile: live settings diverged from desired, re-applying"
+                        )
+                        await _do_switch(current_state)
+                except Exception as e:
+                    logging.warning(f"reconcile check failed: {e}")
+        reconcile_counter += 1
 
         if current_state != last_state and current_config is not None:
             if current_state is not None:
