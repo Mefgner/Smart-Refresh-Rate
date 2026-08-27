@@ -17,22 +17,49 @@ import autostart
 from update_check import LATEST_RELEASE_URL
 
 
-def _make_default_icon() -> Image.Image:
-    img = Image.new("RGB", (64, 64), (30, 30, 30))
+def _is_light_theme() -> bool:
+    try:
+        import winreg
+
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize",
+        ) as key:
+            val, _ = winreg.QueryValueEx(key, "AppsUseLightTheme")
+            return bool(val)
+    except Exception:
+        return False
+
+
+def _make_default_icon(is_light: bool = False) -> Image.Image:
+    if is_light:
+        bg = (245, 245, 245)
+        fg = (30, 30, 30)
+        accent = (30, 90, 180)
+    else:
+        bg = (30, 30, 30)
+        fg = (120, 200, 255)
+        accent = (120, 200, 255)
+    # keep 64x64 crisp
+    img = Image.new("RGB", (64, 64), bg)
     d = ImageDraw.Draw(img)
-    d.rectangle((8, 18, 56, 46), outline=(120, 200, 255), width=3)
-    d.line((20, 32, 44, 32), fill=(120, 200, 255), width=2)
-    d.rectangle((24, 48, 40, 52), fill=(120, 200, 255))
+    # use fg/accent accordingly; light theme uses dark outline for contrast
+    outline = fg if is_light else fg
+    fill_accent = accent
+    d.rectangle((8, 18, 56, 46), outline=outline, width=3)
+    d.line((20, 32, 44, 32), fill=fill_accent, width=2)
+    d.rectangle((24, 48, 40, 52), fill=fill_accent)
     return img
 
 
 def _load_icon(icon_path: Optional[Path]) -> Image.Image:
+    is_light = _is_light_theme()
     if icon_path and icon_path.exists():
         try:
             return Image.open(str(icon_path)).convert("RGBA")
         except Exception as e:
             logging.warning(f"failed to load tray icon {icon_path}: {e}")
-    return _make_default_icon()
+    return _make_default_icon(is_light=is_light)
 
 
 class TrayController:
@@ -51,6 +78,8 @@ class TrayController:
         on_reload: Callable[[], None],
         icon_path: Optional[Path] = None,
         on_check_updates: Optional[Callable[[], None]] = None,
+        notifications_enabled: bool = True,
+        on_toggle_notifications: Optional[Callable[[bool], None]] = None,
     ):
         self.project_name = project_name
         self.exe_path = exe_path
@@ -66,6 +95,9 @@ class TrayController:
         self._displays: list = []
         self._selected_display_id: Optional[str] = None
         self._on_display_select: Optional[Callable] = None
+        self._notifications_enabled = bool(notifications_enabled)
+        self._on_toggle_notifications = on_toggle_notifications
+        self._icon_path = icon_path
 
         self._icon_image = _load_icon(icon_path)
         self._icon: Optional[_Icon] = None
@@ -120,6 +152,20 @@ class TrayController:
                 autostart.enable(self.project_name, self.exe_path)
             icon.update_menu()
 
+    def _toggle_notifications(self, icon, item):
+        with self._menu_lock:
+            self._notifications_enabled = not self._notifications_enabled
+            new_val = self._notifications_enabled
+            if self._on_toggle_notifications is not None:
+                try:
+                    self._on_toggle_notifications(new_val)
+                except Exception as e:
+                    logging.warning(f"on_toggle_notifications failed: {e}")
+            try:
+                icon.update_menu()
+            except Exception:
+                pass
+
     def _exit(self, icon, item):
         logging.info("tray: exit requested")
         self._on_exit()
@@ -149,6 +195,21 @@ class TrayController:
 
     def set_on_check_updates(self, callback: Optional[Callable[[], None]]) -> None:
         self._on_check_updates = callback
+
+    def set_notifications_enabled(self, enabled: bool) -> None:
+        with self._menu_lock:
+            self._notifications_enabled = bool(enabled)
+        self._rebuild_menu()
+
+    def refresh_icon(self) -> None:
+        new_img = _load_icon(self._icon_path)
+        with self._menu_lock:
+            self._icon_image = new_img
+            if self._icon is not None:
+                try:
+                    self._icon.icon = new_img
+                except Exception as e:
+                    logging.warning(f"tray refresh_icon failed: {e}")
 
     def set_displays(
         self,
@@ -194,6 +255,8 @@ class TrayController:
                     pass
 
     def notify(self, message: str, title: str = "SRR"):
+        if not self._notifications_enabled:
+            return
         if self._icon is not None:
             try:
                 self._icon.notify(message, title)
@@ -240,6 +303,11 @@ class TrayController:
                 "Run at startup",
                 self._toggle_autostart,
                 checked=lambda item: autostart.is_enabled(self.project_name),
+            ),
+            pystray.MenuItem(
+                "Notifications",
+                self._toggle_notifications,
+                checked=lambda item: self._notifications_enabled,
             ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem(

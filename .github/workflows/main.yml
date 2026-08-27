@@ -69,10 +69,24 @@ jobs:
           $content = $content -replace "'ProductVersion', '[^']*'", "'ProductVersion', '$ver'"
           Set-Content version_info.txt $content
 
+      - name: 'Generate version.py from version input'
+        run: |
+          $ver = "${{ github.event.inputs.version }}"
+          $core = ($ver -split '-')[0]
+          Set-Content version.py "__version__ = `"$core`""
+          Get-Content version.py
+
       - name: 'Compile (based on Python x64)'
         run: |
           pyinstaller --onefile --clean --noconsole --version-file version_info.txt -n SRR --add-data "assets/icon.png;assets" main.py
           Move-Item -Path .\dist\SRR.exe -Destination ".\SRR_v${{ github.event.inputs.version }}_win64.exe"
+
+      - name: 'SHA256 checksum'
+        run: |
+          $exe = "SRR_v${{ github.event.inputs.version }}_win64.exe"
+          $hash = (Get-FileHash -Algorithm SHA256 $exe).Hash.ToLower()
+          "$hash  $exe" | Set-Content -NoNewline "$exe.sha256"
+          Get-Content "$exe.sha256"
 
       - name: Release
         if: github.ref == 'refs/heads/main'
@@ -80,6 +94,7 @@ jobs:
         with:
           files: |
             SRR_v${{ github.event.inputs.version }}_win64.exe
+            SRR_v${{ github.event.inputs.version }}_win64.exe.sha256
           name: v${{ github.event.inputs.release_name }}
           tag_name: v${{ github.event.inputs.tagname }}
           draft: false

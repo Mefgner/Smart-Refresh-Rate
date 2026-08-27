@@ -12,7 +12,7 @@ A small Windows utility that automatically switches your display's refresh rate:
 
 - Windows 10/11 (x64)
 - A laptop with a battery (with no battery info available there is nothing to react to)
-- Administrator rights (requested via UAC on launch)
+- No administrator privileges required — runs asInvoker; writes only to HKCU (autostart / uninstall registry) and uses `ChangeDisplaySettingsExA` to switch modes. No UAC prompt.
 
 ## Quick start
 
@@ -35,6 +35,26 @@ A small Windows utility that automatically switches your display's refresh rate:
 
 Edit it with any text editor — SRR picks up changes automatically within a few seconds. Monitors connected later are appended to the config automatically.
 
+## Command-line flags
+
+```
+SRR.exe --uninstall   # remove autostart, Start Menu shortcut, uninstall registry key and %LOCALAPPDATA%\SRR, restore default display modes
+SRR.exe --version     # print the bundled version (from version.py) and exit
+SRR.exe --config      # print the config file path (%LOCALAPPDATA%\SRR\config.json) and exit
+```
+
+Flags can also be combined with the installed copy: `%LOCALAPPDATA%\SRR\SRR.exe --version`.
+
+## Updates
+
+- SRR checks for updates automatically on startup and every 24 hours (via `https://api.github.com/repos/Mefgner/Smart-Refresh-Rate/releases/latest`).
+- Tray menu shows **Check for updates** when up to date. When a newer release is found it changes to **Update available: vX.Y.Z**.
+- Clicking **Update available: vX.Y.Z** opens the [releases page](https://github.com/Mefgner/Smart-Refresh-Rate/releases/latest) in your browser. It does not auto-download or auto-install — download and replace the exe manually.
+
+## Logs
+
+Runtime logs are written to `%LOCALAPPDATA%\SRR\logs.txt` (rotating file, 1 MB × 3 backups). Open it from the tray menu **Open logs** or directly in a text editor. The **Open config folder** tray item opens `%LOCALAPPDATA%\SRR`.
+
 ## FAQ
 
 **How do I change settings?**
@@ -42,6 +62,12 @@ Edit `%LOCALAPPDATA%\SRR\config.json` (the tray menu has an **Open config folder
 
 **How do I pause or close it?**
 Right-click the tray icon: **Pause/Resume** temporarily disables switching, **Exit** quits. On exit your displays are restored to their default modes. The **Run at startup** checkbox toggles autostart.
+
+**Can I disable notifications?**
+Yes — tray menu **Notifications** toggles them on/off (persisted in `config.json` as `notifications`, default `true`). When off, SRR still switches modes but suppresses tray balloons (config errors, update notices, etc.).
+
+**What if I launch it twice?**
+SRR is single-instance (Windows named mutex via `CreateMutexW`). Launching a second instance shows a message box — "SRR is already running (check the system tray)" — and exits. No second icon is created.
 
 **How heavy is it on the CPU?**
 SRR polls the power state once every 5 seconds and only reads `config.json` when its timestamp changes, so idle CPU usage is effectively 0%.

@@ -1,0 +1,22 @@
+# Installer manifest for Mefgner.SmartRefreshRate 1.1.6.0
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+# Schema: https://github.com/microsoft/winget-cli/blob/master/schemas/JSON/manifests/v1.10.0/manifest.installer.1.10.0.json
+# Target ManifestVersion: 1.10.0
+# NOTE: InstallerSha256 is a PLACEHOLDER -- replace with the real SHA256 of
+#       SRR_v1.1.6.0_win64.exe after CI builds the release (see winget/README.md).
+PackageIdentifier: Mefgner.SmartRefreshRate
+PackageVersion: 1.1.6.0
+Platform:
+  - Windows.Desktop
+MinimumOSVersion: 10.0.0.0
+InstallerType: portable
+InstallModes:
+  - silent
+UpgradeBehavior: install
+Installers:
+  - Architecture: x64
+    InstallerType: portable
+    InstallerUrl: https://github.com/Mefgner/Smart-Refresh-Rate/releases/download/v1.1.6.0/SRR_v1.1.6.0_win64.exe
+    InstallerSha256: PLACEHOLDER_SHA256_REPLACE_AT_RELEASE_TIME
+ManifestType: installer
+ManifestVersion: 1.10.0

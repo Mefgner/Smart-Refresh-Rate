@@ -1,4 +1,6 @@
+import argparse
 import asyncio
+import atexit
 import ctypes
 import dataclasses
 import json
@@ -38,6 +40,11 @@ PATH_BASE_DIR = PATH_CURRENT_FILE.parent
 PATH_CONFIG = PATH_TO_PROGRAM / "config.json"
 PATH_LOG = PATH_TO_PROGRAM / "logs.txt"
 
+# single-instance mutex handle kept alive for process lifetime
+_mutex_handle = None
+# notifications enabled flag (default True, persisted in config.json)
+_notifications_enabled: bool = True
+
 
 def _resource_path(rel: str) -> Path:
     base = Path(getattr(sys, "_MEIPASS", PATH_BASE_DIR))
@@ -65,6 +72,114 @@ class ScreenSettings:
 
     def __iter__(self) -> Iterator[int]:
         return iter([self.width, self.height, self.refresh_rate])
+
+
+def _coerce_notifications(value) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        if value == 1:
+            return True
+        if value == 0:
+            return False
+        return None
+    if isinstance(value, str):
+        s = value.strip().lower()
+        if s in ("1", "true"):
+            return True
+        if s in ("0", "false"):
+            return False
+    return None
+
+
+def _atomic_write_json(path: Path, data: dict) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    replaced = False
+    try:
+        with open(tmp, "w") as f:
+            json.dump(data, f, indent=4)
+        os.replace(tmp, path)
+        replaced = True
+    finally:
+        if not replaced:
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
+def _tray_notify(message: str, title: str = "SRR") -> None:
+    if not _notifications_enabled:
+        return
+    if _tray is not None:
+        _tray.notify(message, title)
+
+
+def _show_winotify(title: str, msg: str) -> None:
+    if not _notifications_enabled:
+        return
+    try:
+        Notification(app_id=PROJECT_NAME, title=title, msg=msg).show()
+    except Exception as e:
+        logging.warning(f"winotify failed: {e}")
+
+
+def _release_mutex() -> None:
+    global _mutex_handle
+    if _mutex_handle:
+        try:
+            k = ctypes.WinDLL("kernel32", use_last_error=True)
+            k.CloseHandle.argtypes = [ctypes.c_void_p]
+            k.CloseHandle.restype = ctypes.c_int
+            k.CloseHandle(_mutex_handle)
+        except Exception:
+            pass
+        _mutex_handle = None
+
+
+def _acquire_single_instance_mutex() -> None:
+    global _mutex_handle
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+        kernel32.CreateMutexW.restype = ctypes.c_void_p
+        _mutex_handle = kernel32.CreateMutexW(None, 0, "Local\\SRR.SingleInstance")
+        if _mutex_handle and ctypes.get_last_error() == 183:
+            try:
+                ctypes.windll.user32.MessageBoxW(
+                    None,
+                    "SRR is already running (check the system tray)",
+                    "SRR",
+                    0x40,
+                )
+            except Exception:
+                pass
+            sys.exit(0)
+        atexit.register(_release_mutex)
+    except SystemExit:
+        raise
+    except Exception as e:
+        logging.warning(f"mutex check failed: {e}")
+
+
+def _persist_notifications(enabled: bool) -> None:
+    global _notifications_enabled
+    _notifications_enabled = enabled
+    try:
+        existing: dict = {}
+        if PATH_CONFIG.exists():
+            with open(PATH_CONFIG, "r") as f:
+                existing = json.load(f)
+            if not isinstance(existing, dict):
+                existing = {}
+    except Exception:
+        existing = {}
+    existing["notifications"] = bool(enabled)
+    try:
+        PATH_TO_PROGRAM.mkdir(parents=True, exist_ok=True)
+        _atomic_write_json(PATH_CONFIG, existing)
+    except Exception as e:
+        logging.warning(f"failed to persist notifications: {e}")
 
 
 def write_logs(e: BaseException, show_dialog: bool = True):
@@ -100,13 +215,13 @@ def build_display_map() -> Dict[str, bytes]:
     }
 
 
-_CONFIG_RESERVED_KEYS = {"target_display"}
+_CONFIG_RESERVED_KEYS = {"target_display", "notifications"}
 
 
 async def load_config(
     force: bool = False,
 ) -> Optional[Dict[str, Tuple[ScreenSettings, ScreenSettings]]]:
-    global config_last_state, config_last_update, config_last_target
+    global config_last_state, config_last_update, config_last_target, _notifications_enabled
     try:
         update_time = os.path.getmtime(PATH_CONFIG)
     except OSError as e:
@@ -129,9 +244,26 @@ async def load_config(
             result[monitor_id] = (perf, psav)
     except (json.JSONDecodeError, KeyError, TypeError) as e:
         logging.error(f"config parse failed, keeping previous: {e}")
-        if _tray is not None:
-            _tray.notify("config.json is invalid — keeping previous settings.")
+        try:
+            bak = PATH_CONFIG.with_name("config.json.bak")
+            shutil.copy2(PATH_CONFIG, bak)
+        except Exception:
+            pass
+        _tray_notify("config.json is invalid — keeping previous settings.")
         return config_last_state
+
+    # notifications with coercion, default True
+    raw_notif = raw.get("notifications", True)
+    coerced = _coerce_notifications(raw_notif)
+    if coerced is None:
+        coerced = True
+    _notifications_enabled = coerced
+    # sync tray checkbox if tray exists
+    if _tray is not None:
+        try:
+            _tray.set_notifications_enabled(coerced)
+        except Exception:
+            pass
 
     config_last_update = update_time
     config_last_state = result
@@ -147,9 +279,11 @@ def save_target_display(mid: Optional[str]) -> None:
         if PATH_CONFIG.exists():
             with open(PATH_CONFIG, "r") as f:
                 existing = json.load(f)
+            if not isinstance(existing, dict):
+                existing = {}
         existing["target_display"] = mid
-        with open(PATH_CONFIG, "w") as f:
-            json.dump(existing, f, indent=4)
+        PATH_TO_PROGRAM.mkdir(parents=True, exist_ok=True)
+        _atomic_write_json(PATH_CONFIG, existing)
     except Exception as e:
         logging.warning(f"failed to save target_display: {e}")
 
@@ -163,8 +297,7 @@ async def change_screen_settings(ss: ScreenSettings, adapter_name: bytes) -> Non
         except RuntimeError as e:
             msg = f"Skipping {adapter_name!r}: {e}"
             logging.warning(msg)
-            if _tray is not None:
-                _tray.notify(msg)
+            _tray_notify(msg)
             return None
 
     res = _set_resolution()
@@ -174,8 +307,7 @@ async def change_screen_settings(ss: ScreenSettings, adapter_name: bytes) -> Non
     if res == DISP_RESULTS.DISP_CHANGE_BADPARAM:
         msg = f"Unsupported display mode in config.json for {adapter_name!r}."
         logging.error(msg)
-        if _tray is not None:
-            _tray.notify(msg)
+        _tray_notify(msg)
         return
 
     if res != DISP_RESULTS.DISP_CHANGE_SUCCESSFUL:
@@ -318,6 +450,11 @@ async def srr_loop() -> None:
 
         if _reload_event.is_set():
             _reload_event.clear()
+            if _tray is not None:
+                try:
+                    _tray.refresh_icon()
+                except Exception:
+                    pass
             current_config = await load_config(force=True)
             display_map = build_display_map()
             _refresh_tray_displays()
@@ -338,8 +475,7 @@ async def srr_loop() -> None:
             _refresh_tray_displays()
             if new_config is not None and new_config != current_config:
                 current_config = new_config
-                if _tray is not None:
-                    _tray.notify("Config reloaded.")
+                _tray_notify("Config reloaded.")
                 if current_state is not None:
                     await _do_switch(current_state)
         counter += 1
@@ -352,7 +488,7 @@ async def srr_loop() -> None:
                 if ver and _tray is not None:
                     _tray.set_update_available(ver)
                     if ver != _last_notified_update_version:
-                        _tray.notify(f"Update available: v{ver}", "SRR")
+                        _tray_notify(f"Update available: v{ver}", "SRR")
                         _last_notified_update_version = ver
             except Exception as e:
                 logging.warning(f"periodic update check failed: {e}")
@@ -417,7 +553,7 @@ async def get_processes(app_name: str):
     return out
 
 
-def _register_uninstall(target_exe: Path) -> None:
+def _register_uninstall(target_exe: Path) -> bool:
     try:
         import winreg
         uninstall_cmd = f'"{target_exe}" --uninstall'
@@ -429,8 +565,10 @@ def _register_uninstall(target_exe: Path) -> None:
             winreg.SetValueEx(key, "NoModify",        0, winreg.REG_DWORD, 1)
             winreg.SetValueEx(key, "NoRepair",        0, winreg.REG_DWORD, 1)
         logging.info("uninstall registry entry registered")
+        return True
     except Exception as e:
         logging.warning(f"_register_uninstall failed: {e}")
+        return False
 
 
 def _uninstall() -> None:
@@ -471,7 +609,7 @@ def _uninstall() -> None:
     sys.exit(0)
 
 
-def _create_start_menu_shortcut(target_exe: Path) -> None:
+def _create_start_menu_shortcut(target_exe: Path) -> bool:
     start_menu = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
     shortcut = start_menu / f"{PROJECT_NAME}.lnk"
     script = (
@@ -482,13 +620,21 @@ def _create_start_menu_shortcut(target_exe: Path) -> None:
         f'$s.Save()'
     )
     try:
-        subprocess.run(
+        result = subprocess.run(
             ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
             capture_output=True, timeout=10,
         )
+        if result.returncode != 0:
+            logging.warning(f"start menu shortcut failed: rc={result.returncode} {result.stderr!r}")
+            return False
+        if not shortcut.exists():
+            logging.warning(f"start menu shortcut not found after creation: {shortcut}")
+            return False
         logging.info(f"start menu shortcut created: {shortcut}")
+        return True
     except Exception as e:
         logging.warning(f"start menu shortcut failed: {e}")
+        return False
 
 
 async def install():
@@ -509,28 +655,68 @@ async def install():
 
     PATH_TO_PROGRAM.mkdir(parents=True, exist_ok=True)
     target_exe = PATH_TO_PROGRAM / PROJECT_EXECUTABLE
+    start_menu = Path(os.environ["APPDATA"]) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
+    shortcut = start_menu / f"{PROJECT_NAME}.lnk"
+    _autostart_was_enabled = autostart.is_enabled(PROJECT_NAME)
+    _we_enabled_autostart = False
     try:
-        shutil.copy2(PATH_CURRENT_FILE, target_exe)
-    except OSError as e:
-        logging.error(f"copy to {target_exe} failed: {e}")
+        try:
+            shutil.copy2(PATH_CURRENT_FILE, target_exe)
+        except OSError as e:
+            raise RuntimeError(f"Failed to copy executable to {target_exe}: {e}") from e
+
+        if not autostart.enable(PROJECT_NAME, target_exe):
+            raise RuntimeError("Failed to register autostart")
+        _we_enabled_autostart = True
+
+        if not _register_uninstall(target_exe):
+            raise RuntimeError("Failed to register uninstall entry")
+
+        if not _create_start_menu_shortcut(target_exe):
+            raise RuntimeError("Failed to create Start Menu shortcut")
+
+        try:
+            os.startfile(str(target_exe))
+        except OSError as e:
+            raise RuntimeError(f"Failed to launch installed copy: {e}") from e
+
+        _show_winotify("SRR installed", "SRR now runs in background. A tray icon will appear.")
+        sys.exit(0)
+    except SystemExit:
         raise
-
-    autostart.enable(PROJECT_NAME, target_exe)
-    _register_uninstall(target_exe)
-    _create_start_menu_shortcut(target_exe)
-
-    try:
-        os.startfile(str(target_exe))
-    except OSError as e:
-        logging.error(f"failed to launch installed copy: {e}")
-        raise
-
-    Notification(
-        app_id=PROJECT_NAME,
-        title="SRR installed",
-        msg="SRR now runs in background. A tray icon will appear.",
-    ).show()
-    sys.exit(0)
+    except Exception as e:
+        logging.error(f"install failed: {e}")
+        # rollback best-effort in reverse order (shortcut → autostart → exe → uninstall key)
+        try:
+            if shortcut.exists():
+                shortcut.unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            if _we_enabled_autostart and not _autostart_was_enabled:
+                autostart.disable(PROJECT_NAME)
+        except Exception:
+            pass
+        try:
+            if target_exe.exists():
+                target_exe.unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            import winreg
+            try:
+                winreg.DeleteKey(winreg.HKEY_CURRENT_USER, UNINSTALL_REG_KEY)
+            except FileNotFoundError:
+                pass
+        except Exception:
+            pass
+        msg = f"Installation failed:\n{e}\n\nChanges have been rolled back."
+        try:
+            ctypes.windll.user32.MessageBoxW(None, msg, "SRR Installation Error", 0x10)
+        except Exception:
+            pass
+        print(f"Installation failed: {e}", file=sys.stderr)
+        sys.exit(1)
 
 
 def _ensure_config() -> None:
@@ -712,10 +898,31 @@ def _ensure_config() -> None:
             logging.info(f"added display {mid!r} ({disp['monitor_string']!r}) to config")
             changed = True
 
+    # notifications field (bool, default True)
+    global _notifications_enabled
+    if "notifications" not in existing:
+        existing["notifications"] = True
+        _notifications_enabled = True
+        changed = True
+    else:
+        raw_n = existing["notifications"]
+        coerced = _coerce_notifications(raw_n)
+        if coerced is None:
+            coerced = True
+            changed = True
+        elif coerced != raw_n:
+            changed = True
+        existing["notifications"] = coerced
+        _notifications_enabled = coerced
+        if _tray is not None:
+            try:
+                _tray.set_notifications_enabled(coerced)
+            except Exception:
+                pass
+
     if changed or not PATH_CONFIG.exists():
         PATH_TO_PROGRAM.mkdir(parents=True, exist_ok=True)
-        with open(PATH_CONFIG, "w") as f:
-            json.dump(existing, f, indent=4)
+        _atomic_write_json(PATH_CONFIG, existing)
 
 
 async def srr():
@@ -737,10 +944,23 @@ async def srr():
             reschanger.set_display_defaults(adapter_names)
         except Exception as e:
             logging.warning(f"set_display_defaults failed: {e}")
+        try:
+            _release_mutex()
+        except Exception:
+            pass
         loop.call_soon_threadsafe(_shutdown_ev.set)
 
     def _request_reload():
         loop.call_soon_threadsafe(_reload_ev.set)
+
+    def _handle_toggle_notifications(enabled: bool):
+        _persist_notifications(enabled)
+        # keep tray in sync (already toggled by tray, but ensure)
+        if _tray is not None:
+            try:
+                _tray.set_notifications_enabled(enabled)
+            except Exception:
+                pass
 
     _tray = TrayController(
         project_name=PROJECT_NAME,
@@ -750,6 +970,8 @@ async def srr():
         on_exit=_request_exit,
         on_reload=_request_reload,
         icon_path=PATH_ICON if PATH_ICON.exists() else None,
+        notifications_enabled=_notifications_enabled,
+        on_toggle_notifications=_handle_toggle_notifications,
     )
     _tray.start()
 
@@ -760,7 +982,7 @@ async def srr():
             if ver and _tray is not None:
                 _tray.set_update_available(ver)
                 if ver != _last_notified_update_version:
-                    _tray.notify(f"Update available: v{ver}", "SRR")
+                    _tray_notify(f"Update available: v{ver}", "SRR")
                     _last_notified_update_version = ver
         except Exception as e:
             logging.warning(f"update check failed: {e}")
@@ -802,7 +1024,23 @@ def _setup_logging():
 
 
 if __name__ == "__main__":
-    if "--uninstall" in sys.argv:
+    _cli_parser = argparse.ArgumentParser(description="Smart Refresh Rate — per-monitor refresh switcher")
+    _cli_parser.add_argument("--uninstall", action="store_true", help="uninstall SRR")
+    _cli_parser.add_argument("--version", action="store_true", help="print version and exit")
+    _cli_parser.add_argument("--config", action="store_true", help="print config path and exit")
+    _args, _ = _cli_parser.parse_known_args()
+    if _args.uninstall:
         _uninstall()
+    if _args.version:
+        try:
+            from version import __version__
+            print(__version__)
+        except Exception:
+            print("unknown")
+        sys.exit(0)
+    if _args.config:
+        print(str(PATH_CONFIG.resolve()))
+        sys.exit(0)
+    _acquire_single_instance_mutex()
     _setup_logging()
     asyncio.run(main())

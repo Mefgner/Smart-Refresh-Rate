@@ -1,0 +1,9 @@
+# Version manifest for Mefgner.SmartRefreshRate 1.1.6.0
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.1.10.0.schema.json
+# Schema: https://github.com/microsoft/winget-cli/blob/master/schemas/JSON/manifests/v1.10.0/manifest.version.1.10.0.json
+# Target ManifestVersion: 1.10.0 (current stable for winget-pkgs; 1.12.0 docs exist but 1.10.0 is widely validated)
+PackageIdentifier: Mefgner.SmartRefreshRate
+PackageVersion: 1.1.6.0
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.10.0
