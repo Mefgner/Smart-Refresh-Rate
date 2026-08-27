@@ -145,7 +145,7 @@ def _acquire_single_instance_mutex() -> None:
             try:
                 ctypes.windll.user32.MessageBoxW(
                     None,
-                    "SRR is already running (check the system tray)",
+                    "SRR is already running. Please close the existing instance in the system tray before starting a new one.",
                     "SRR",
                     0x40,
                 )
