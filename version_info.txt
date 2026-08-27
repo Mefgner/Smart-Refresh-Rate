@@ -3,8 +3,8 @@
 # Bump filevers/prodvers and the *Version strings together with each release.
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 1, 5, 0),
-    prodvers=(1, 1, 5, 0),
+    filevers=(1, 1, 6, 0),
+    prodvers=(1, 1, 6, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -17,12 +17,12 @@ VSVersionInfo(
       StringTable('040904B0', [
         StringStruct('CompanyName', 'Mefgner'),
         StringStruct('FileDescription', 'Smart Refresh Rate - automatic display refresh rate switching'),
-        StringStruct('FileVersion', '1.1.5.0'),
+        StringStruct('FileVersion', '1.1.6.0'),
         StringStruct('InternalName', 'SRR'),
         StringStruct('LegalCopyright', 'MIT License'),
         StringStruct('OriginalFilename', 'SRR.exe'),
         StringStruct('ProductName', 'Smart Refresh Rate'),
-        StringStruct('ProductVersion', '1.1.5.0')
+        StringStruct('ProductVersion', '1.1.6.0')
       ])
     ]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
