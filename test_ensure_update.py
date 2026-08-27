@@ -165,6 +165,25 @@ def test_ensure_target_preserved():
     assert res["target_display"] == r"MONITOR\A\1"
     print("test_ensure_target_preserved PASS")
 
+def test_ensure_flat_notifications_preserved():
+    # reviewer: legacy flat config carrying the old `notifications` key must be
+    # classified as pure flat (preserve values), not "mixed" (which would drop
+    # the custom flat values and regenerate from registry).
+    displays = [{"monitor_id": r"MONITOR\A\1", "adapter_name": b"\\\\.\\DISPLAY1", "monitor_string": "A"}]
+    flat_notif = {"performance-state": {"width": 2560, "height": 1440, "refresh_rate": 144},
+                  "powersave-state": {"width": 2560, "height": 1440, "refresh_rate": 60},
+                  "notifications": True}
+    # active displays present -> pure flat migration preserves 144/60 (not registry 240)
+    res = _run_ensure(flat_notif, displays, mock_w=3840, mock_h=2160, mock_freq=240, mock_bat=60)
+    assert res[displays[0]["monitor_id"]]["performance-state"]["refresh_rate"] == 144, f"flat perf must be preserved, got {res}"
+    assert res[displays[0]["monitor_id"]]["powersave-state"]["refresh_rate"] == 60, f"flat psav must be preserved, got {res}"
+    assert "notifications" not in res, "legacy notifications must not be persisted back"
+    # no active displays at migration time -> config kept intact (FIX 1)
+    res2 = _run_ensure(flat_notif, [])
+    assert res2["performance-state"]["refresh_rate"] == 144
+    assert res2["powersave-state"]["refresh_rate"] == 60
+    print("test_ensure_flat_notifications_preserved PASS")
+
 def test_dedup_startup_and_periodic():
     # covers Fix4: same version → no second notify, new version → notify
     orig_check = update_check.check_for_updates
@@ -224,6 +243,49 @@ def test_dedup_startup_and_periodic():
     update_check.check_for_updates = orig_check
     print("test_dedup_startup_and_periodic PASS")
 
+def test_clear_stale_on_no_update():
+    # D-2: a "no update" result must clear the tray status to None (disabled
+    # "No updates yet"), not keep a stale version; clearing must not notify.
+    orig_check = update_check.check_for_updates
+    orig_last = main._last_notified_update_version
+    orig_tray = main._tray
+
+    class MockTray:
+        def __init__(self):
+            self.notified = []
+            self.versions = []
+        def set_update_available(self, v):
+            self.versions.append(v)
+        def notify(self, msg, title="SRR"):
+            self.notified.append((msg, title))
+
+    mock_tray = MockTray()
+    main._tray = mock_tray
+    main._last_notified_update_version = None
+
+    async def mock_120():
+        return "1.2.0"
+
+    async def mock_none():
+        return None
+
+    update_check.check_for_updates = mock_120
+    asyncio.run(main._run_update_check())
+    assert mock_tray.versions[-1] == "1.2.0"
+    assert len(mock_tray.notified) == 1, "update should notify"
+
+    # no update -> status cleared, no second notify, no stale version kept
+    update_check.check_for_updates = mock_none
+    asyncio.run(main._run_update_check())
+    assert mock_tray.versions[-1] is None, "no-update must clear stale status"
+    assert len(mock_tray.notified) == 1, "clear must not notify"
+
+    # restore
+    main._tray = orig_tray
+    main._last_notified_update_version = orig_last
+    update_check.check_for_updates = orig_check
+    print("test_clear_stale_on_no_update PASS")
+
 if __name__ == "__main__":
     test_parse_and_is_newer()
     test_ensure_migration_valid()
@@ -232,5 +294,7 @@ if __name__ == "__main__":
     test_ensure_no_active_keeps_legacy()
     test_ensure_coercion()
     test_ensure_target_preserved()
+    test_ensure_flat_notifications_preserved()
     test_dedup_startup_and_periodic()
+    test_clear_stale_on_no_update()
     print("\nALL TESTS PASSED")

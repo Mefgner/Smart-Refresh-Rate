@@ -42,8 +42,6 @@ PATH_LOG = PATH_TO_PROGRAM / "logs.txt"
 
 # single-instance mutex handle kept alive for process lifetime
 _mutex_handle = None
-# notifications enabled flag (default True, persisted in config.json)
-_notifications_enabled: bool = True
 
 
 def _resource_path(rel: str) -> Path:
@@ -74,24 +72,6 @@ class ScreenSettings:
         return iter([self.width, self.height, self.refresh_rate])
 
 
-def _coerce_notifications(value) -> Optional[bool]:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, int) and not isinstance(value, bool):
-        if value == 1:
-            return True
-        if value == 0:
-            return False
-        return None
-    if isinstance(value, str):
-        s = value.strip().lower()
-        if s in ("1", "true"):
-            return True
-        if s in ("0", "false"):
-            return False
-    return None
-
-
 def _atomic_write_json(path: Path, data: dict) -> None:
     tmp = path.with_name(path.name + ".tmp")
     replaced = False
@@ -109,19 +89,36 @@ def _atomic_write_json(path: Path, data: dict) -> None:
 
 
 def _tray_notify(message: str, title: str = "SRR") -> None:
-    if not _notifications_enabled:
-        return
     if _tray is not None:
         _tray.notify(message, title)
 
 
 def _show_winotify(title: str, msg: str) -> None:
-    if not _notifications_enabled:
-        return
     try:
         Notification(app_id=PROJECT_NAME, title=title, msg=msg).show()
     except Exception as e:
         logging.warning(f"winotify failed: {e}")
+
+
+async def _run_update_check() -> None:
+    """One update check (startup / 24h / on-demand): set tray status + notify
+    on a new version (dedup via _last_notified_update_version), or clear stale
+    status to "No updates yet" when there is none (D-2)."""
+    global _last_notified_update_version
+    if _tray is None:
+        return
+    try:
+        ver = await update_check.check_for_updates()
+    except Exception as e:
+        logging.warning(f"update check failed: {e}")
+        ver = None
+    if ver:
+        _tray.set_update_available(ver)
+        if ver != _last_notified_update_version:
+            _tray_notify(f"Update available: v{ver}", "SRR")
+            _last_notified_update_version = ver
+    else:
+        _tray.set_update_available(None)
 
 
 def _release_mutex() -> None:
@@ -160,26 +157,6 @@ def _acquire_single_instance_mutex() -> None:
         raise
     except Exception as e:
         logging.warning(f"mutex check failed: {e}")
-
-
-def _persist_notifications(enabled: bool) -> None:
-    global _notifications_enabled
-    _notifications_enabled = enabled
-    try:
-        existing: dict = {}
-        if PATH_CONFIG.exists():
-            with open(PATH_CONFIG, "r") as f:
-                existing = json.load(f)
-            if not isinstance(existing, dict):
-                existing = {}
-    except Exception:
-        existing = {}
-    existing["notifications"] = bool(enabled)
-    try:
-        PATH_TO_PROGRAM.mkdir(parents=True, exist_ok=True)
-        _atomic_write_json(PATH_CONFIG, existing)
-    except Exception as e:
-        logging.warning(f"failed to persist notifications: {e}")
 
 
 def write_logs(e: BaseException, show_dialog: bool = True):
@@ -221,7 +198,7 @@ _CONFIG_RESERVED_KEYS = {"target_display", "notifications"}
 async def load_config(
     force: bool = False,
 ) -> Optional[Dict[str, Tuple[ScreenSettings, ScreenSettings]]]:
-    global config_last_state, config_last_update, config_last_target, _notifications_enabled
+    global config_last_state, config_last_update, config_last_target
     try:
         update_time = os.path.getmtime(PATH_CONFIG)
     except OSError as e:
@@ -252,19 +229,8 @@ async def load_config(
         _tray_notify("config.json is invalid — keeping previous settings.")
         return config_last_state
 
-    # notifications with coercion, default True
-    raw_notif = raw.get("notifications", True)
-    coerced = _coerce_notifications(raw_notif)
-    if coerced is None:
-        coerced = True
-    _notifications_enabled = coerced
-    # sync tray checkbox if tray exists
-    if _tray is not None:
-        try:
-            _tray.set_notifications_enabled(coerced)
-        except Exception:
-            pass
-
+    # silently ignore legacy `notifications` key if present (compat, no error, no persistence)
+    # (legacy field is filtered on next write via save_target_display)
     config_last_update = update_time
     config_last_state = result
     config_last_target = raw.get("target_display", None)
@@ -282,6 +248,8 @@ def save_target_display(mid: Optional[str]) -> None:
             if not isinstance(existing, dict):
                 existing = {}
         existing["target_display"] = mid
+        # drop legacy notifications field if present
+        existing.pop("notifications", None)
         PATH_TO_PROGRAM.mkdir(parents=True, exist_ok=True)
         _atomic_write_json(PATH_CONFIG, existing)
     except Exception as e:
@@ -376,7 +344,6 @@ def _format_display_name(
 
 
 async def srr_loop() -> None:
-    global _last_notified_update_version
     assert _shutdown_event is not None
     assert _reload_event is not None
 
@@ -483,15 +450,7 @@ async def srr_loop() -> None:
         # Periodic update check every 24h (86400s) — dedup notify (FIX 4)
         if time.monotonic() - last_update_check >= 86400:
             last_update_check = time.monotonic()
-            try:
-                ver = await update_check.check_for_updates()
-                if ver and _tray is not None:
-                    _tray.set_update_available(ver)
-                    if ver != _last_notified_update_version:
-                        _tray_notify(f"Update available: v{ver}", "SRR")
-                        _last_notified_update_version = ver
-            except Exception as e:
-                logging.warning(f"periodic update check failed: {e}")
+            await _run_update_check()
 
         # Sleep-wake reconciliation: at a rarer interval than TIME_STEP
         # (RECONCILE_EVERY ticks ~60s) compare live current display settings
@@ -898,27 +857,9 @@ def _ensure_config() -> None:
             logging.info(f"added display {mid!r} ({disp['monitor_string']!r}) to config")
             changed = True
 
-    # notifications field (bool, default True)
-    global _notifications_enabled
-    if "notifications" not in existing:
-        existing["notifications"] = True
-        _notifications_enabled = True
-        changed = True
-    else:
-        raw_n = existing["notifications"]
-        coerced = _coerce_notifications(raw_n)
-        if coerced is None:
-            coerced = True
-            changed = True
-        elif coerced != raw_n:
-            changed = True
-        existing["notifications"] = coerced
-        _notifications_enabled = coerced
-        if _tray is not None:
-            try:
-                _tray.set_notifications_enabled(coerced)
-            except Exception:
-                pass
+    # drop legacy notifications field if present (D-5: do not persist it back;
+    # best-effort pop, no error; FIX 1 no-active-displays path still skips write)
+    existing.pop("notifications", None)
 
     if changed or not PATH_CONFIG.exists():
         PATH_TO_PROGRAM.mkdir(parents=True, exist_ok=True)
@@ -953,15 +894,6 @@ async def srr():
     def _request_reload():
         loop.call_soon_threadsafe(_reload_ev.set)
 
-    def _handle_toggle_notifications(enabled: bool):
-        _persist_notifications(enabled)
-        # keep tray in sync (already toggled by tray, but ensure)
-        if _tray is not None:
-            try:
-                _tray.set_notifications_enabled(enabled)
-            except Exception:
-                pass
-
     _tray = TrayController(
         project_name=PROJECT_NAME,
         exe_path=PATH_TO_PROGRAM / PROJECT_EXECUTABLE,
@@ -970,31 +902,17 @@ async def srr():
         on_exit=_request_exit,
         on_reload=_request_reload,
         icon_path=PATH_ICON if PATH_ICON.exists() else None,
-        notifications_enabled=_notifications_enabled,
-        on_toggle_notifications=_handle_toggle_notifications,
     )
     _tray.start()
 
-    async def _do_update_check():
-        global _last_notified_update_version
-        try:
-            ver = await update_check.check_for_updates()
-            if ver and _tray is not None:
-                _tray.set_update_available(ver)
-                if ver != _last_notified_update_version:
-                    _tray_notify(f"Update available: v{ver}", "SRR")
-                    _last_notified_update_version = ver
-        except Exception as e:
-            logging.warning(f"update check failed: {e}")
-
     def _on_tray_check_updates():
         try:
-            loop.call_soon_threadsafe(lambda: asyncio.create_task(_do_update_check()))
+            loop.call_soon_threadsafe(lambda: asyncio.create_task(_run_update_check()))
         except Exception as e:
             logging.warning(f"failed to schedule update check: {e}")
 
     _tray.set_on_check_updates(_on_tray_check_updates)
-    asyncio.create_task(_do_update_check())
+    asyncio.create_task(_run_update_check())
 
     cfg = await load_config()
     if cfg is not None:

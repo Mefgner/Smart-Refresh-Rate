@@ -31,7 +31,7 @@ Tags:
   - power-management
   - tray
   - utility
-ReleaseNotes: Update checker, single-instance guard, atomic config writes, notification toggle, light/dark tray icon, installer rollback, and stability improvements.
+ReleaseNotes: Update checker, single-instance guard, atomic config writes, notifications controlled via Windows Settings, light/dark tray icon, installer rollback, and stability improvements.
 ReleaseNotesUrl: https://github.com/Mefgner/Smart-Refresh-Rate/releases/tag/v1.1.6.0
 ManifestType: defaultLocale
 ManifestVersion: 1.10.0

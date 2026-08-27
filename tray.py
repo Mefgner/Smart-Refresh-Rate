@@ -4,6 +4,7 @@ import logging
 import os
 import threading
 import time
+import webbrowser
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Optional
 
@@ -78,8 +79,6 @@ class TrayController:
         on_reload: Callable[[], None],
         icon_path: Optional[Path] = None,
         on_check_updates: Optional[Callable[[], None]] = None,
-        notifications_enabled: bool = True,
-        on_toggle_notifications: Optional[Callable[[bool], None]] = None,
     ):
         self.project_name = project_name
         self.exe_path = exe_path
@@ -95,8 +94,6 @@ class TrayController:
         self._displays: list = []
         self._selected_display_id: Optional[str] = None
         self._on_display_select: Optional[Callable] = None
-        self._notifications_enabled = bool(notifications_enabled)
-        self._on_toggle_notifications = on_toggle_notifications
         self._icon_path = icon_path
 
         self._icon_image = _load_icon(icon_path)
@@ -152,39 +149,29 @@ class TrayController:
                 autostart.enable(self.project_name, self.exe_path)
             icon.update_menu()
 
-    def _toggle_notifications(self, icon, item):
-        with self._menu_lock:
-            self._notifications_enabled = not self._notifications_enabled
-            new_val = self._notifications_enabled
-            if self._on_toggle_notifications is not None:
-                try:
-                    self._on_toggle_notifications(new_val)
-                except Exception as e:
-                    logging.warning(f"on_toggle_notifications failed: {e}")
-            try:
-                icon.update_menu()
-            except Exception:
-                pass
-
     def _exit(self, icon, item):
         logging.info("tray: exit requested")
         self._on_exit()
         icon.stop()
 
-    def _handle_update_check(self, icon, item):
-        if self._update_version:
+    def _trigger_update_check(self, icon, item):
+        """Runs on the tray thread; marshals to the asyncio loop via on_check_updates."""
+        if self._on_check_updates is not None:
             try:
-                os.startfile(LATEST_RELEASE_URL)
+                self._on_check_updates()
+            except Exception as e:
+                logging.warning(f"on_check_updates failed: {e}")
+        else:
+            logging.debug("update check requested but no handler")
+
+    def _open_releases(self, icon, item):
+        try:
+            os.startfile(LATEST_RELEASE_URL)
+        except Exception:
+            try:
+                webbrowser.open(LATEST_RELEASE_URL)
             except Exception as e:
                 logging.warning(f"failed to open browser for update: {e}")
-        else:
-            if self._on_check_updates is not None:
-                try:
-                    self._on_check_updates()
-                except Exception as e:
-                    logging.warning(f"on_check_updates failed: {e}")
-            else:
-                logging.debug("update check requested but no handler")
 
     # --- public api ---------------------------------------------------
 
@@ -195,11 +182,6 @@ class TrayController:
 
     def set_on_check_updates(self, callback: Optional[Callable[[], None]]) -> None:
         self._on_check_updates = callback
-
-    def set_notifications_enabled(self, enabled: bool) -> None:
-        with self._menu_lock:
-            self._notifications_enabled = bool(enabled)
-        self._rebuild_menu()
 
     def refresh_icon(self) -> None:
         new_img = _load_icon(self._icon_path)
@@ -255,8 +237,6 @@ class TrayController:
                     pass
 
     def notify(self, message: str, title: str = "SRR"):
-        if not self._notifications_enabled:
-            return
         if self._icon is not None:
             try:
                 self._icon.notify(message, title)
@@ -304,15 +284,16 @@ class TrayController:
                 self._toggle_autostart,
                 checked=lambda item: autostart.is_enabled(self.project_name),
             ),
-            pystray.MenuItem(
-                "Notifications",
-                self._toggle_notifications,
-                checked=lambda item: self._notifications_enabled,
-            ),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Check for updates", self._trigger_update_check),
             pystray.MenuItem(
-                lambda item: f"Update available: v{self._update_version}" if self._update_version else "Check for updates",
-                self._handle_update_check,
+                lambda item: (
+                    f"Update available: v{self._update_version}"
+                    if self._update_version
+                    else "No updates yet"
+                ),
+                self._open_releases,
+                enabled=lambda item: bool(self._update_version),
             ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Exit", self._exit),

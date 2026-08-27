@@ -48,7 +48,7 @@ Flags can also be combined with the installed copy: `%LOCALAPPDATA%\SRR\SRR.exe 
 ## Updates
 
 - SRR checks for updates automatically on startup and every 24 hours (via `https://api.github.com/repos/Mefgner/Smart-Refresh-Rate/releases/latest`).
-- Tray menu shows **Check for updates** when up to date. When a newer release is found it changes to **Update available: vX.Y.Z**.
+- The tray menu always shows **Check for updates** (click to check right away) and a status item beneath it: **No updates yet** when up to date, or **Update available: vX.Y.Z** when a newer release exists.
 - Clicking **Update available: vX.Y.Z** opens the [releases page](https://github.com/Mefgner/Smart-Refresh-Rate/releases/latest) in your browser. It does not auto-download or auto-install — download and replace the exe manually.
 
 ## Logs
@@ -64,7 +64,7 @@ Edit `%LOCALAPPDATA%\SRR\config.json` (the tray menu has an **Open config folder
 Right-click the tray icon: **Pause/Resume** temporarily disables switching, **Exit** quits. On exit your displays are restored to their default modes. The **Run at startup** checkbox toggles autostart.
 
 **Can I disable notifications?**
-Yes — tray menu **Notifications** toggles them on/off (persisted in `config.json` as `notifications`, default `true`). When off, SRR still switches modes but suppresses tray balloons (config errors, update notices, etc.).
+There is no in-app toggle — SRR always attempts to show notifications (tray balloons for config errors, update notices, etc.). To silence them, disable notifications for **Smart Refresh Rate** in Windows Settings → System → Notifications.
 
 **What if I launch it twice?**
 SRR is single-instance (Windows named mutex via `CreateMutexW`). Launching a second instance shows a message box — "SRR is already running (check the system tray)" — and exits. No second icon is created.
