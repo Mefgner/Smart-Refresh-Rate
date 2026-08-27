@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Dict, Iterator, Optional, Tuple
 
@@ -16,6 +17,7 @@ from winotify import Notification
 
 import autostart
 import reschanger
+import update_check
 from reschanger import DISP_RESULTS
 from tray import TrayController
 
@@ -48,6 +50,7 @@ PATH_ICON = _resource_path("assets/icon.png")
 _shutdown_event: Optional[asyncio.Event] = None
 _reload_event: Optional[asyncio.Event] = None
 _tray: Optional[TrayController] = None
+_last_notified_update_version: Optional[str] = None
 
 config_last_state: Optional[Dict[str, Tuple["ScreenSettings", "ScreenSettings"]]] = None
 config_last_update = None
@@ -241,6 +244,7 @@ def _format_display_name(
 
 
 async def srr_loop() -> None:
+    global _last_notified_update_version
     assert _shutdown_event is not None
     assert _reload_event is not None
 
@@ -252,6 +256,7 @@ async def srr_loop() -> None:
         _tray.set_state_text(_state_label(last_state))
     counter = 0
     reconcile_counter = 0
+    last_update_check = time.monotonic()
 
     loop = asyncio.get_running_loop()
     managed_display_id: Optional[str] = config_last_target
@@ -338,6 +343,19 @@ async def srr_loop() -> None:
                 if current_state is not None:
                     await _do_switch(current_state)
         counter += 1
+
+        # Periodic update check every 24h (86400s) — dedup notify (FIX 4)
+        if time.monotonic() - last_update_check >= 86400:
+            last_update_check = time.monotonic()
+            try:
+                ver = await update_check.check_for_updates()
+                if ver and _tray is not None:
+                    _tray.set_update_available(ver)
+                    if ver != _last_notified_update_version:
+                        _tray.notify(f"Update available: v{ver}", "SRR")
+                        _last_notified_update_version = ver
+            except Exception as e:
+                logging.warning(f"periodic update check failed: {e}")
 
         # Sleep-wake reconciliation: at a rarer interval than TIME_STEP
         # (RECONCILE_EVERY ticks ~60s) compare live current display settings
@@ -520,42 +538,179 @@ def _ensure_config() -> None:
     Create or update config.json.
     Each active display gets an entry keyed by its stable monitor DeviceID.
     Existing entries are never overwritten — only new displays are appended.
-    Old flat-format configs (pre-multimonitor) are discarded and rebuilt.
+    Legacy flat configs are migrated to per-monitor entries, preserving values;
+    invalid entries are regenerated from registry.
     """
     existing: dict = {}
     if PATH_CONFIG.exists():
         try:
             with open(PATH_CONFIG, "r") as f:
                 existing = json.load(f)
-            if "performance-state" in existing or "powersave-state" in existing:
-                logging.info("old config format detected — rebuilding")
+            if not isinstance(existing, dict):
+                logging.warning("config is not a dict — rebuilding")
                 existing = {}
         except Exception as e:
             logging.warning(f"could not read existing config: {e}")
             existing = {}
 
+    def _valid_screen(d) -> bool:
+        if not isinstance(d, dict):
+            return False
+        for k in ("width", "height", "refresh_rate"):
+            if k not in d:
+                return False
+            v = d[k]
+            if isinstance(v, bool):
+                return False
+            try:
+                iv = int(v)
+                if iv <= 0:
+                    return False
+            except Exception:
+                return False
+        return True
+
+    def _valid_entry(entry) -> bool:
+        if not isinstance(entry, dict):
+            return False
+        return _valid_screen(entry.get("performance-state")) and _valid_screen(
+            entry.get("powersave-state")
+        )
+
     changed = False
-    for disp in reschanger.get_active_displays():
-        mid = disp["monitor_id"]
-        if mid in existing:
-            continue
 
-        adapter = disp["adapter_name"]
-        try:
-            w, h, freq = reschanger.get_display_settings(
-                adapter, reschanger.ENUM_REGISTRY_SETTINGS
+    # --- legacy flat migration (deferred until active displays known — FIX 1) ---
+    has_flat = "performance-state" in existing or "powersave-state" in existing
+    has_monitor_keys = any(
+        k not in _CONFIG_RESERVED_KEYS
+        and k not in ("performance-state", "powersave-state")
+        for k in existing
+    )
+    # store raw candidates without mutating yet
+    legacy_raw_perf = existing.get("performance-state") if has_flat else None
+    legacy_raw_psav = existing.get("powersave-state") if has_flat else None
+
+    try:
+        active_displays = reschanger.get_active_displays()
+    except Exception as e:
+        logging.warning(f"get_active_displays failed: {e}")
+        active_displays = []
+
+    legacy_perf = None
+    legacy_psav = None
+    legacy_valid = False
+    if has_flat:
+        if not active_displays:
+            logging.info(
+                "legacy flat config detected but no active displays — keeping legacy config intact"
             )
-        except RuntimeError as e:
-            logging.warning(f"could not read registry settings for {mid!r}: {e}")
-            continue
+            # do not pop / do not mark changed to avoid data loss (FIX 1)
+        elif not has_monitor_keys:
+            # pure flat format — preserve values
+            legacy_perf = existing.pop("performance-state", None)
+            legacy_psav = existing.pop("powersave-state", None)
+            changed = True
+            if _valid_screen(legacy_perf) and _valid_screen(legacy_psav):
+                legacy_valid = True
+                logging.info("legacy flat config detected — migrating to per-monitor format")
+            else:
+                logging.info(
+                    "legacy flat config detected with invalid values — will regenerate from registry"
+                )
+                legacy_perf = None
+                legacy_psav = None
+        else:
+            # mixed: flat keys alongside monitor entries — strip flat keys but preserve for invalid fallback (FIX 2)
+            legacy_perf = existing.pop("performance-state", None)
+            legacy_psav = existing.pop("powersave-state", None)
+            changed = True
+            if _valid_screen(legacy_perf) and _valid_screen(legacy_psav):
+                legacy_valid = True
+                logging.info(
+                    "legacy flat keys found alongside monitor entries — removing flat keys, will use for invalid entries"
+                )
+            else:
+                logging.info(
+                    "legacy flat keys with invalid values alongside monitor entries — removing flat keys"
+                )
+                legacy_perf = None
+                legacy_psav = None
+        # keep raw vars for potential debugging (unused)
+        _ = (legacy_raw_perf, legacy_raw_psav)
 
-        bat_freq = reschanger.best_powersave_freq(adapter, w, h)
-        existing[mid] = {
-            "performance-state": {"width": w, "height": h, "refresh_rate": freq},
-            "powersave-state": {"width": w, "height": h, "refresh_rate": bat_freq},
-        }
-        logging.info(f"added display {mid!r} ({disp['monitor_string']!r}) to config")
-        changed = True
+    for disp in active_displays:
+        mid = disp["monitor_id"]
+        adapter = disp["adapter_name"]
+        entry = existing.get(mid)
+
+        needs_regen = False
+        if entry is None:
+            needs_regen = True
+        elif not _valid_entry(entry):
+            logging.info(f"display {mid!r} entry invalid — regenerating")
+            needs_regen = True
+        else:
+            coerced = False
+            for state_key in ("performance-state", "powersave-state"):
+                sd = entry[state_key]
+                for field in ("width", "height", "refresh_rate"):
+                    orig = sd[field]
+                    if isinstance(orig, bool):
+                        needs_regen = True
+                        break
+                    try:
+                        iv = int(orig)
+                    except Exception:
+                        needs_regen = True
+                        break
+                    if not isinstance(orig, int) or orig != iv:
+                        sd[field] = iv
+                        coerced = True
+                if needs_regen:
+                    break
+            if coerced:
+                changed = True
+            if not needs_regen:
+                continue
+
+        if needs_regen:
+            # FIX 2: legacy should be fallback for invalid entries as well (preserve flat values)
+            use_legacy = False
+            if legacy_valid and legacy_perf is not None and legacy_psav is not None:
+                if entry is None:
+                    # missing: only use legacy for pure flat (FIX 1 keeps legacy intact only when pure)
+                    if not has_monitor_keys:
+                        use_legacy = True
+                else:
+                    # invalid entry: use legacy where present (FIX 2)
+                    use_legacy = True
+            if use_legacy:
+                assert legacy_perf is not None and legacy_psav is not None
+                existing[mid] = {
+                    "performance-state": {
+                        k: int(legacy_perf[k]) for k in ("width", "height", "refresh_rate")
+                    },
+                    "powersave-state": {
+                        k: int(legacy_psav[k]) for k in ("width", "height", "refresh_rate")
+                    },
+                }
+                logging.info(f"migrated legacy config to display {mid!r}")
+                changed = True
+                continue
+            try:
+                w, h, freq = reschanger.get_display_settings(
+                    adapter, reschanger.ENUM_REGISTRY_SETTINGS
+                )
+            except RuntimeError as e:
+                logging.warning(f"could not read registry settings for {mid!r}: {e}")
+                continue
+            bat_freq = reschanger.best_powersave_freq(adapter, w, h)
+            existing[mid] = {
+                "performance-state": {"width": w, "height": h, "refresh_rate": freq},
+                "powersave-state": {"width": w, "height": h, "refresh_rate": bat_freq},
+            }
+            logging.info(f"added display {mid!r} ({disp['monitor_string']!r}) to config")
+            changed = True
 
     if changed or not PATH_CONFIG.exists():
         PATH_TO_PROGRAM.mkdir(parents=True, exist_ok=True)
@@ -597,6 +752,27 @@ async def srr():
         icon_path=PATH_ICON if PATH_ICON.exists() else None,
     )
     _tray.start()
+
+    async def _do_update_check():
+        global _last_notified_update_version
+        try:
+            ver = await update_check.check_for_updates()
+            if ver and _tray is not None:
+                _tray.set_update_available(ver)
+                if ver != _last_notified_update_version:
+                    _tray.notify(f"Update available: v{ver}", "SRR")
+                    _last_notified_update_version = ver
+        except Exception as e:
+            logging.warning(f"update check failed: {e}")
+
+    def _on_tray_check_updates():
+        try:
+            loop.call_soon_threadsafe(lambda: asyncio.create_task(_do_update_check()))
+        except Exception as e:
+            logging.warning(f"failed to schedule update check: {e}")
+
+    _tray.set_on_check_updates(_on_tray_check_updates)
+    asyncio.create_task(_do_update_check())
 
     cfg = await load_config()
     if cfg is not None:

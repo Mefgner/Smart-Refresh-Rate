@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 from PIL import Image, ImageDraw
 
 import autostart
+from update_check import LATEST_RELEASE_URL
 
 
 def _make_default_icon() -> Image.Image:
@@ -49,6 +50,7 @@ class TrayController:
         on_exit: Callable[[], None],
         on_reload: Callable[[], None],
         icon_path: Optional[Path] = None,
+        on_check_updates: Optional[Callable[[], None]] = None,
     ):
         self.project_name = project_name
         self.exe_path = exe_path
@@ -56,6 +58,8 @@ class TrayController:
         self.log_path = log_path
         self._on_exit = on_exit
         self._on_reload = on_reload
+        self._on_check_updates = on_check_updates
+        self._update_version: Optional[str] = None
 
         self.paused = False
         self.state_text = "starting…"
@@ -66,6 +70,15 @@ class TrayController:
         self._icon_image = _load_icon(icon_path)
         self._icon: Optional[_Icon] = None
         self._thread: Optional[threading.Thread] = None
+        self._menu_lock = threading.RLock()
+
+        # Thread-safety note: verified pystray Win32 _update_menu (see
+        # .venv/Lib/site-packages/pystray/_win32.py) manipulates HMenu handles
+        # directly without queuing; existing code calls set_state_text/
+        # set_displays from the asyncio thread, so we serialize all menu
+        # mutations via _menu_lock. set_update_available is called from the
+        # asyncio thread (update-check coroutine) and therefore acquires the
+        # same lock to avoid racing Icon.__call__ on the tray thread.
 
         # Double-click detection: pystray Win32 backend has no native
         # double-click (window class style 0 lacks CS_DBLCLKS, _on_notify
@@ -78,9 +91,10 @@ class TrayController:
     # --- menu actions -------------------------------------------------
 
     def _toggle_pause(self, icon, item):
-        self.paused = not self.paused
-        logging.info(f"tray: paused={self.paused}")
-        icon.update_menu()
+        with self._menu_lock:
+            self.paused = not self.paused
+            logging.info(f"tray: paused={self.paused}")
+            icon.update_menu()
 
     def _reload(self, icon, item):
         logging.info("tray: reload config requested")
@@ -99,18 +113,42 @@ class TrayController:
             logging.error(f"open logs failed: {e}")
 
     def _toggle_autostart(self, icon, item):
-        if autostart.is_enabled(self.project_name):
-            autostart.disable(self.project_name)
-        else:
-            autostart.enable(self.project_name, self.exe_path)
-        icon.update_menu()
+        with self._menu_lock:
+            if autostart.is_enabled(self.project_name):
+                autostart.disable(self.project_name)
+            else:
+                autostart.enable(self.project_name, self.exe_path)
+            icon.update_menu()
 
     def _exit(self, icon, item):
         logging.info("tray: exit requested")
         self._on_exit()
         icon.stop()
 
+    def _handle_update_check(self, icon, item):
+        if self._update_version:
+            try:
+                os.startfile(LATEST_RELEASE_URL)
+            except Exception as e:
+                logging.warning(f"failed to open browser for update: {e}")
+        else:
+            if self._on_check_updates is not None:
+                try:
+                    self._on_check_updates()
+                except Exception as e:
+                    logging.warning(f"on_check_updates failed: {e}")
+            else:
+                logging.debug("update check requested but no handler")
+
     # --- public api ---------------------------------------------------
+
+    def set_update_available(self, version: Optional[str]) -> None:
+        with self._menu_lock:
+            self._update_version = version
+        self._rebuild_menu()
+
+    def set_on_check_updates(self, callback: Optional[Callable[[], None]]) -> None:
+        self._on_check_updates = callback
 
     def set_displays(
         self,
@@ -118,38 +156,42 @@ class TrayController:
         selected_id: Optional[str],
         on_select: Callable,
     ):
-        self._displays = [{"id": None, "name": "All displays"}] + displays
-        self._selected_display_id = selected_id
-        self._on_display_select = on_select
+        with self._menu_lock:
+            self._displays = [{"id": None, "name": "All displays"}] + displays
+            self._selected_display_id = selected_id
+            self._on_display_select = on_select
         self._rebuild_menu()
 
     def _make_display_selector(self, display_id: Optional[str]) -> Callable:
         def handler(icon, item):
-            self._selected_display_id = display_id
-            if self._on_display_select is not None:
-                self._on_display_select(display_id)
-            try:
-                icon.update_menu()
-            except Exception:
-                pass
+            with self._menu_lock:
+                self._selected_display_id = display_id
+                if self._on_display_select is not None:
+                    self._on_display_select(display_id)
+                try:
+                    icon.update_menu()
+                except Exception:
+                    pass
         return handler
 
     def _rebuild_menu(self):
-        if self._icon is not None:
-            try:
-                self._icon.menu = self._build_menu()
-                self._icon.update_menu()
-            except Exception as e:
-                logging.warning(f"tray menu rebuild failed: {e}")
+        with self._menu_lock:
+            if self._icon is not None:
+                try:
+                    self._icon.menu = self._build_menu()
+                    self._icon.update_menu()
+                except Exception as e:
+                    logging.warning(f"tray menu rebuild failed: {e}")
 
     def set_state_text(self, text: str):
-        self.state_text = text
-        if self._icon is not None:
-            try:
-                self._icon.update_menu()
-                self._icon.title = f"SRR — {text}"
-            except Exception:
-                pass
+        with self._menu_lock:
+            self.state_text = text
+            if self._icon is not None:
+                try:
+                    self._icon.update_menu()
+                    self._icon.title = f"SRR — {text}"
+                except Exception:
+                    pass
 
     def notify(self, message: str, title: str = "SRR"):
         if self._icon is not None:
@@ -198,6 +240,11 @@ class TrayController:
                 "Run at startup",
                 self._toggle_autostart,
                 checked=lambda item: autostart.is_enabled(self.project_name),
+            ),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                lambda item: f"Update available: v{self._update_version}" if self._update_version else "Check for updates",
+                self._handle_update_check,
             ),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Exit", self._exit),
